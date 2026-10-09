@@ -10,6 +10,15 @@ instead of the hardware's step-entry workflow.
 - Store patterns and patches locally, import/export them as files
 - Play the real TD-3 from the editor and move patterns to and from it over USB-MIDI
 
+## Documentation
+- [docs/TD-3-MO.md](docs/TD-3-MO.md): what we learned about the device: hardware and USB, what can
+  and cannot be controlled, pattern memory, how the sequencer stores notes, ties and rests, the
+  pattern and `.seq` formats, test results on a real TD-3-MO, open questions and sources.
+- [docs/MIDI-IMPLEMENTATION.md](docs/MIDI-IMPLEMENTATION.md): the MIDI implementation: channel
+  messages, clock and transport, every known SysEx command with byte layouts and examples.
+- [src/hardware/README.md](src/hardware/README.md): how the hardware code is organised and the
+  rules for writing to the device.
+
 ## Run locally
 ```bash
 npm install
@@ -71,7 +80,7 @@ npm run build
   overwriting their own patches (`FACTORY_VERSION` in `patch.js`). Save, delete and an "edited" indicator.
 - **Pattern files**: `Import` accepts `.mid` and SynthTribe `.seq` (detected by content). Export as
   `.mid` (for DAWs) or `.seq` (for SynthTribe / the TD-3). The `.seq` and SysEx format is in
-  `src/model/td3format.js`. See `src/hardware/README.md` for what is still unverified.
+  `src/model/td3format.js`; the format is documented in [docs/TD-3-MO.md](docs/TD-3-MO.md).
 - **MIDI mapping**: Accent = velocity (127 out, >= 100 counts as accent in), slide = overlapping notes,
   ties = longer notes. A file longer than one bar fills the following slots (up to 16) and becomes a
   chain; with a chain selected, `.mid` export writes the whole chain. Import keeps one note per step
@@ -80,7 +89,7 @@ npm run build
 - **TD-3 over USB** (`TD-3 USB` in the top bar, Chrome/Edge): play the sequencer on the real synth
   (accent = velocity, slide = overlapping notes), receive one slot or the whole bank, and send the
   current pattern to its slot with an automatic backup and a read-back check. Details and open
-  questions: `src/hardware/README.md`.
+  questions: [docs/TD-3-MO.md](docs/TD-3-MO.md) and [docs/MIDI-IMPLEMENTATION.md](docs/MIDI-IMPLEMENTATION.md).
 - Export and import of the whole bank (patterns + patches) as JSON. Everything also autosaves
   to localStorage.
 - Keyboard shortcuts: press `?` in the app for the full list.
@@ -118,8 +127,12 @@ src/
     hw/                       reusable hardware widgets: Knob, SlideSwitch, HwButton, SevenSeg, SvgDefs
   hardware/
     td3.js                    Web MIDI: SysEx request/response client, live note player
-    README.md                 what the link does, data mapping, what is still unverified
+    README.md                 developer notes: layers, write rules, testing
 tests/                        Vitest suites (npm test)
+docs/
+  TD-3-MO.md                  device notes: hardware, pattern memory, data format, test results
+  MIDI-IMPLEMENTATION.md      MIDI + SysEx implementation
+.github/workflows/deploy.yml  test, build and publish to GitHub Pages
 ```
 
 ## Data model (how it maps to the TD-3)
@@ -158,7 +171,7 @@ tests/                        Vitest suites (npm test)
   the synth.
 
 ## Known TODOs
-- USB link verified on a real TD-3-MO (firmware 2.0.1), see `src/hardware/README.md`. Still open:
+- USB link verified on a real TD-3-MO (firmware 2.0.1), see [docs/TD-3-MO.md](docs/TD-3-MO.md). Still open:
   triplet timing.
 - Compare the panel layout and sound against a real TD-3-MO and retune the MO controls and
   factory patches by ear.

@@ -6,7 +6,7 @@
 //   2. Pattern memory over SysEx: read a slot, write a slot (with backup + read-back check).
 //
 // No Vue in here; the reactive wrapper lives in src/store/device.js.
-// Message formats: see src/model/td3format.js and src/hardware/README.md.
+// Message formats: see docs/MIDI-IMPLEMENTATION.md and src/model/td3format.js.
 
 import { PAYLOAD_SIZE, TD3_MODEL_ID, encodePatternSysex, requestPatternSysex } from '../model/td3format.js'
 
