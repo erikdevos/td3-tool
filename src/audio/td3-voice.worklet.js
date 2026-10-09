@@ -1,4 +1,4 @@
-// TD-3-MO style monosynth voice, running in an AudioWorklet.
+// TD-3 / TD-3-MO style monosynth voice, running in an AudioWorklet.
 //
 // The core follows Open303 by Robin Schmidt (MIT license, see NOTICE below): its
 // measured TB-303 filter model ("TeeBee" coupled diode-ladder approximation), the 303
@@ -7,6 +7,9 @@
 // On top of that sit the TD-3-MO "Modded Out" controls: normal/accent decay, VCA decay,
 // soft attack, slide time, filter tracking, filter FM, accent sweep + sweep speed,
 // muffler, overdrive and sub oscillator.
+// With `model: 1` the voice behaves like a regular TD-3 instead: DECAY sets the filter
+// envelope (as on the TB-303), the MO controls are fixed at stock values and the
+// built-in distortion (DS-1 style: dist, tone, level) replaces the overdrive.
 //
 // Oscillator and filter run 4x oversampled, like Open303.
 //
@@ -178,8 +181,17 @@ const DEFAULT_PARAMS = {
   accentSweep: 1,
   sweepSpeed: 1,
   muffler: 0,
-  subOsc: 0
+  subOsc: 0,
+  distOn: 0,
+  distDrive: 0.5,
+  distTone: 0.5,
+  distLevel: 0.5,
+  model: 0 // 0 = TD-3-MO, 1 = TD-3
 }
+
+// Stock TB-303 / TD-3 timing (Open303 defaults)
+const STOCK = { accentDecayMs: 200, ampDecayMs: 1230, attackMs: 3, slideMs: 60 }
+const STOCK_OVERRIDES = { filterTracking: 0, filterFm: 0, accentSweep: 1, sweepSpeed: 1, muffler: 0, subOsc: 0, overdrive: 0 }
 
 // Open303's envelope-to-cutoff mapping, measured on a real TB-303
 const C0 = 313.8152786059267 // lowest nominal cutoff
@@ -190,6 +202,7 @@ class TD3Voice extends AudioWorkletProcessor {
   constructor() {
     super()
     this.p = { ...DEFAULT_PARAMS }
+    this.stockP = { ...DEFAULT_PARAMS } // reused per block in TD-3 mode (no allocation on the audio thread)
     this.queue = []
     const fs = sampleRate
     const fsOs = fs * OVERSAMPLING
@@ -233,6 +246,11 @@ class TD3Voice extends AudioWorkletProcessor {
     this.notch = biquadNotch(7.5164, 4.7, fs)
     this.deClick = biquadLowpass(200, Math.SQRT1_2, fs)
 
+    // TD-3 distortion: pre-emphasis, clipper, tone (lowpass/highpass blend)
+    this.distPre = onePoleHighpass(120, fs)
+    this.distLp = { y: 0, a: 1 - Math.exp((-2 * PI * 600) / fs) }
+    this.distHp = { y: 0, a: 1 - Math.exp((-2 * PI * 1800) / fs) }
+
     this.lastOut = 0
     this.dcX = 0
     this.dcY = 0
@@ -266,8 +284,11 @@ class TD3Voice extends AudioWorkletProcessor {
     const p = this.p
     this.noteAccent = accent
     this.accentGain = accent ? p.accent : 0
-    // MO: separate normal / accent decay of the main (filter) envelope
-    const decayMs = accent ? expMap(p.accentDecay, 30, 3000) : expMap(p.normalDecay, 60, 3000)
+    // MO: separate normal / accent decay of the main (filter) envelope.
+    // TD-3: DECAY sets the normal-note filter decay (200 ms .. 2 s), accents use a fixed 200 ms.
+    const decayMs = p.model === 1
+      ? accent ? STOCK.accentDecayMs : expMap(p.decay, 200, 2000)
+      : accent ? expMap(p.accentDecay, 30, 3000) : expMap(p.normalDecay, 60, 3000)
     this.megCoef = Math.exp(-1 / (0.001 * decayMs * sampleRate))
     // Open303: accented notes release slower
     const releaseMs = accent ? 50 : 1
@@ -286,8 +307,9 @@ class TD3Voice extends AudioWorkletProcessor {
     this.oscFreq = 440 * Math.pow(2, (ev.midi - 69) / 12)
     this.slewFreq = this.oscFreq
     this.meg = 1
-    // MO soft attack: only on unaccented notes
-    this.ampAttackMs = this.noteAccent ? 0 : 30 * this.p.softAttack * this.p.softAttack
+    // MO soft attack: only on unaccented notes (TD-3: fixed short attack)
+    const attack = this.p.model === 1 ? STOCK.attackMs : 30 * this.p.softAttack * this.p.softAttack
+    this.ampAttackMs = this.noteAccent ? 0 : attack
     this.ampTime = 0
     this.noteOn = true
     this.idle = false
@@ -310,7 +332,9 @@ class TD3Voice extends AudioWorkletProcessor {
     const left = out[0]
     if (!left) return true
     const frames = left.length
-    const p = this.p
+    // the regular TD-3 has none of the MO controls: use stock values for them
+    const p = this.p.model === 1 ? Object.assign(this.stockP, this.p, STOCK_OVERRIDES) : this.p
+    const td3 = p.model === 1
     const sm = this.sm
     const fs = sampleRate
     const fsOs = this.fsOs
@@ -318,14 +342,16 @@ class TD3Voice extends AudioWorkletProcessor {
 
     // per-block values
     const smoothK = 1 - Math.exp(-1 / (0.012 * fs))
-    const slideMs = expMap(p.slideTime, 30, 360) // TD-3: ~60 ms, MO: up to 6x
+    const slideMs = td3 ? STOCK.slideMs : expMap(p.slideTime, 30, 360) // TD-3: ~60 ms, MO: up to 6x
     const slewCoef = Math.exp(-1 / (0.001 * 0.2 * slideMs * fs))
     const sweepMs = [6, 15, 45][p.sweepSpeed] ?? 15
     const rc2Coef = Math.exp(-1 / (0.001 * sweepMs * fs))
     const sweepAmount = [0, 1, 1.6][p.accentSweep] ?? 1
     const sweepRes = p.accentSweep === 2 ? 0.35 : 0
     // MO: DECAY controls the VCA decay (Open303 fixed it at 1230 ms); fully up = drone
-    const ampDecayCoef = p.decay >= 0.985 ? 0 : 1 - Math.exp(-1 / (0.001 * expMap(p.decay, 20, 6000) * fs))
+    // TD-3: fixed VCA decay
+    const ampDecayMs = td3 ? STOCK.ampDecayMs : expMap(p.decay, 20, 6000)
+    const ampDecayCoef = !td3 && p.decay >= 0.985 ? 0 : 1 - Math.exp(-1 / (0.001 * ampDecayMs * fs))
     const attackCoef = this.ampAttackMs > 0 ? 1 - Math.exp(-1 / (0.001 * this.ampAttackMs * fs)) : 1
     const tuningRatio = Math.pow(2, (p.tuning - 0.5) * 2)
     const subLevel = [0, 0.25, 0.45, 0.7][p.subOsc] || 0
@@ -368,7 +394,7 @@ class TD3Voice extends AudioWorkletProcessor {
       this.rc2 = accentIn + rc2Coef * (this.rc2 - accentIn)
 
       // ---- cutoff: Open303 measured env-mod mapping (MO: wider cutoff range)
-      const cutoffHz = expMap(sm.cutoff, C0 * 0.55, C1 * 1.35)
+      const cutoffHz = td3 ? expMap(sm.cutoff, C0, C1) : expMap(sm.cutoff, C0 * 0.55, C1 * 1.35)
       const c = clamp(Math.log(cutoffHz / C0) / Math.log(C1 / C0), 0, 1)
       const e = sm.envMod
       const envScaler = (1 - c) * (ENV.sLoF * e + ENV.sLoC) + c * (ENV.sHiF * e + ENV.sHiC)
@@ -448,9 +474,22 @@ class TD3Voice extends AudioWorkletProcessor {
         }
       }
 
-      // ---- MO overdrive
-      const drive = 0.6 + sm.overdrive * sm.overdrive * 14
-      sig = softTanh(sig * drive) / (Math.sqrt(drive) * 0.8)
+      if (td3) {
+        // ---- TD-3 distortion (DS-1 style): emphasis + clipper, tone blend, output level
+        if (p.distOn === 1) {
+          const pre = onePole(this.distPre, sig) * expMap(p.distDrive, 4, 120)
+          const clipped = pre > 0 ? softTanh(pre) : softTanh(pre * 0.85) / 0.85
+          this.distLp.y += this.distLp.a * (clipped - this.distLp.y)
+          this.distHp.y += this.distHp.a * (clipped - this.distHp.y)
+          const high = clipped - this.distHp.y
+          const toned = this.distLp.y * (1 - p.distTone) + high * p.distTone * 1.6
+          sig = toned * 0.85 * Math.pow(p.distLevel, 1.6)
+        }
+      } else {
+        // ---- MO overdrive
+        const drive = 0.6 + sm.overdrive * sm.overdrive * 14
+        sig = softTanh(sig * drive) / (Math.sqrt(drive) * 0.8)
+      }
 
       sig *= sm.volume * sm.volume * 2.2
 

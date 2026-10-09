@@ -1,7 +1,9 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { MODELS } from './model/patch.js'
 import { BANK_SIZE, pitchOf } from './model/pattern.js'
 import { useEditor } from './store/editor.js'
+import DeviceOverlay from './components/DeviceOverlay.vue'
 import EditorBar from './components/EditorBar.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import LibraryOverlay from './components/LibraryOverlay.vue'
@@ -17,6 +19,8 @@ const editor = useEditor()
 const { state } = editor
 const showHelp = ref(false)
 const showLibrary = ref(false)
+const showDevice = ref(false)
+const model = computed(() => MODELS[state.model])
 
 // Computer keyboard as a one-octave piano: A W S E D F T G Y H U J K = C .. C'
 const NOTE_KEYS = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12 }
@@ -32,13 +36,14 @@ const onKeyDown = (event) => {
   if (key === 'Escape') {
     showHelp.value = false
     showLibrary.value = false
+    showDevice.value = false
     return
   }
   if (key === '?') {
     showHelp.value = !showHelp.value
     return
   }
-  if (showHelp.value || showLibrary.value) return
+  if (showHelp.value || showLibrary.value || showDevice.value) return
 
   if (mod) {
     if (lower === 'z') {
@@ -125,15 +130,15 @@ onBeforeUnmount(() => {
 <template>
   <SvgDefs />
   <div class="app">
-    <EditorBar @help="showHelp = true" />
+    <EditorBar @help="showHelp = true" @device="showDevice = true" />
 
-    <main class="device" aria-label="TD-3-MO">
+    <main class="device" :aria-label="model.name">
       <!-- yellow synth section -->
       <div class="chassis">
         <div class="nameplate">
           <div class="model">
-            <span class="model-name">TD-3-MO</span>
-            <span class="model-desc">Modded Out Analog Bass Line Synthesizer</span>
+            <span class="model-name">{{ model.name }}</span>
+            <span class="model-desc">{{ model.description }}</span>
             <svg class="smiley" viewBox="0 0 40 40" aria-hidden="true">
               <circle cx="20" cy="20" r="17" />
               <path d="M13.5 15.5 l3 1.6 M26.5 15.5 l-3 1.6" />
@@ -155,19 +160,18 @@ onBeforeUnmount(() => {
 
       <!-- sequencer section (same yellow body, below a groove) -->
       <div class="seq">
+        <!-- one row: transport, length, pattern memory, edit/pattern tools -->
         <div class="seq-top">
           <Transport />
           <PatternTools part="length" />
           <PatternBank />
-        </div>
-        <div class="seq-tools">
           <PatternTools part="tools" @library="showLibrary = true" />
-          <button type="button" class="hint-link" @click="showHelp = true">Shortcuts (?)</button>
         </div>
         <PianoRoll />
         <p class="hint">
           Click to add a note · drag the right edge to lengthen it · drag up/down to change pitch · click a note to
-          delete it
+          delete it ·
+          <button type="button" class="hint-link" @click="showHelp = true">Shortcuts (?)</button>
         </p>
       </div>
     </main>
@@ -178,6 +182,7 @@ onBeforeUnmount(() => {
 
     <HelpOverlay v-if="showHelp" @close="showHelp = false" />
     <LibraryOverlay v-if="showLibrary" @close="showLibrary = false" />
+    <DeviceOverlay v-if="showDevice" @close="showDevice = false" />
   </div>
 </template>
 
@@ -187,7 +192,7 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   padding: 16px 16px 32px;
   display: grid;
-  gap: 16px;
+  gap: 8px;
 }
 
 .device {
@@ -199,10 +204,10 @@ onBeforeUnmount(() => {
     linear-gradient(180deg, var(--chassis-light) 0%, var(--chassis) 22%, var(--chassis) 78%, var(--chassis-deep) 100%);
   color: var(--ink);
   box-shadow:
-    inset 0 2px 0 rgba(255, 240, 190, 0.7),
-    inset 0 -3px 0 rgba(120, 75, 0, 0.35),
-    inset 2px 0 0 rgba(255, 230, 160, 0.35),
-    inset -2px 0 0 rgba(120, 75, 0, 0.25),
+    inset 0 2px 0 var(--body-hi),
+    inset 0 -3px 0 var(--body-lo),
+    inset 2px 0 0 var(--body-hi),
+    inset -2px 0 0 var(--body-lo),
     0 30px 60px rgba(0, 0, 0, 0.55),
     0 6px 14px rgba(0, 0, 0, 0.45);
 }
@@ -278,11 +283,11 @@ onBeforeUnmount(() => {
   /* print colours for the yellow body */
   --print: var(--ink);
   --print-dim: var(--ink-soft);
-  --print-line: rgba(22, 20, 17, 0.28);
+  --print-line: var(--ink-soft);
   position: relative;
-  padding: 14px 18px 12px;
-  border-top: 2px solid rgba(110, 70, 0, 0.55);
-  box-shadow: inset 0 1px 0 rgba(255, 236, 170, 0.75);
+  padding: 12px 14px 12px;
+  border-top: 2px solid var(--body-lo);
+  box-shadow: inset 0 1px 0 var(--body-hi);
   color: var(--ink);
   display: grid;
   gap: 12px;
@@ -290,25 +295,12 @@ onBeforeUnmount(() => {
 
 .seq-top {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px 24px;
-  flex-wrap: wrap;
-}
-
-.seq-tools {
-  display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px 20px;
+  gap: 12px;
   flex-wrap: wrap;
-  padding: 10px 0 12px;
-  border-top: 1px solid var(--print-line);
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--print-line);
-}
-
-.seq-tools .hint-link {
-  font-size: 12px;
 }
 
 .hint {

@@ -2,12 +2,12 @@
   <!-- Shared gradients / filters referenced by the hardware components -->
   <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
     <defs>
-      <!-- TD-3-MO knob: translucent amber skirt ... -->
+      <!-- knob skirt: colours come from the theme (amber on the MO, black / aluminium on others) -->
       <radialGradient id="knob-skirt" cx="42%" cy="35%" r="72%">
-        <stop offset="0%" stop-color="#f7c443" />
-        <stop offset="45%" stop-color="#d99a0a" />
-        <stop offset="80%" stop-color="#a86f02" />
-        <stop offset="100%" stop-color="#6a4400" />
+        <stop offset="0%" style="stop-color: var(--knob-skirt-1)" />
+        <stop offset="45%" style="stop-color: var(--knob-skirt-2)" />
+        <stop offset="80%" style="stop-color: var(--knob-skirt-3)" />
+        <stop offset="100%" style="stop-color: var(--knob-skirt-4)" />
       </radialGradient>
       <!-- ... with a black cap -->
       <radialGradient id="knob-cap" cx="38%" cy="30%" r="80%">

@@ -1,17 +1,29 @@
 <script setup>
 import { computed } from 'vue'
 
-// Multi-position slide switch (vertical), like the TD-3 waveform / MO switches.
+// Multi-position slide switch, like the TD-3 waveform / MO switches.
+// vertical: positions stacked next to the track (panel look)
+// horizontal: label left, sideways track with the position names underneath (compact rows)
 // Click a position label to select it, click the switch body to cycle.
 const props = defineProps({
   modelValue: { type: Number, required: true },
   positions: { type: Array, required: true },
-  label: { type: String, default: '' }
+  label: { type: String, default: '' },
+  orientation: { type: String, default: 'vertical' } // 'vertical' | 'horizontal'
 })
 const emit = defineEmits(['update:modelValue'])
 
-const PITCH = 13
-const trackHeight = computed(() => props.positions.length * PITCH + 4)
+const PITCH = 13 // vertical: px per position
+const H_PITCH = 24 // horizontal: px per position
+const horizontal = computed(() => props.orientation === 'horizontal')
+const trackStyle = computed(() =>
+  horizontal.value
+    ? { width: `${props.positions.length * H_PITCH + 4}px` }
+    : { height: `${props.positions.length * PITCH + 4}px` }
+)
+const thumbStyle = computed(() => ({
+  transform: horizontal.value ? `translateX(${props.modelValue * H_PITCH}px)` : `translateY(${props.modelValue * PITCH}px)`
+}))
 
 const cycle = () => emit('update:modelValue', (props.modelValue + 1) % props.positions.length)
 
@@ -31,18 +43,19 @@ const onKey = (event) => {
 </script>
 
 <template>
-  <div class="switch">
+  <div :class="['switch', { 'switch--h': horizontal }]">
+    <span v-if="label && horizontal" class="switch-label">{{ label }}</span>
     <div class="switch-body">
       <button
         type="button"
         class="track"
         role="radiogroup"
         :aria-label="label"
-        :style="{ height: `${trackHeight}px` }"
+        :style="trackStyle"
         @click="cycle"
         @keydown="onKey"
       >
-        <span class="thumb" :style="{ transform: `translateY(${modelValue * PITCH}px)` }"></span>
+        <span class="thumb" :style="thumbStyle"></span>
       </button>
       <ul class="positions">
         <li v-for="(pos, i) in positions" :key="pos">
@@ -59,7 +72,7 @@ const onKey = (event) => {
         </li>
       </ul>
     </div>
-    <span v-if="label" class="switch-label">{{ label }}</span>
+    <span v-if="label && !horizontal" class="switch-label">{{ label }}</span>
   </div>
 </template>
 
@@ -84,7 +97,7 @@ const onKey = (event) => {
   border: 0;
   border-radius: 3px;
   background: linear-gradient(90deg, #050505, #1e1e1e 50%, #050505);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 0 1.5px var(--ink), 0 1px 0 1.5px rgba(255, 236, 170, 0.5);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 0 1.5px var(--ink), 0 1px 0 1.5px var(--body-hi);
   cursor: pointer;
 }
 
@@ -152,5 +165,59 @@ const onKey = (event) => {
   text-align: center;
   max-width: 80px;
   line-height: 1.05;
+}
+
+/* ---- horizontal variant ---- */
+.switch--h {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.switch--h .switch-label {
+  max-width: 64px;
+  text-align: right;
+}
+
+.switch--h .switch-body {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.switch--h .track {
+  height: 14px;
+}
+
+.switch--h .thumb {
+  width: 22px;
+  height: 10px;
+  background: repeating-linear-gradient(90deg, #5a5a5a 0 1px, #2c2c2c 1px 3px);
+}
+
+.switch--h .thumb::after {
+  left: 10px;
+  right: auto;
+  top: 1px;
+  bottom: 1px;
+  width: 1px;
+  height: auto;
+}
+
+.switch--h .positions {
+  display: flex;
+  padding: 0 0 0 2px;
+}
+
+.switch--h .positions li {
+  width: 24px;
+  text-align: center;
+}
+
+.switch--h .positions button {
+  width: 100%;
+  font-size: 8.5px;
+  line-height: 10px;
+  text-align: center;
 }
 </style>

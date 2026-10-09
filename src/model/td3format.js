@@ -25,7 +25,7 @@
 // UNVERIFIED on real hardware (check before writing to a device, see src/hardware/README.md):
 //   - tie direction: we follow the behaviour reported by td3-pattern (tie bit on step i =
 //     note continues into step i+1)
-//   - pattern slot numbering in SysEx (A1-A8 = 0-7, B1-B8 = 8-15)
+//   - pattern slot numbering in SysEx (A1-A8 = 0-7, B1-B8 = 8-15; Acid-Injector and td3-pattern agree)
 //   - whether the TD-3-MO uses the same model ID (0x0A) and payload as the TD-3
 
 import { MAX_STEPS, fromPitch, makePattern, makeStep, pitchOf } from './pattern.js'
@@ -72,7 +72,7 @@ export const encodePayload = (pattern) => {
     for (let i = n.start; i < n.end - 1; i += 1) tieMask &= ~(1 << i) // held into next step
   })
 
-  out[97] = 0 // triplet off
+  out[97] = pattern.triplet ? 1 : 0
   out.set(nib(pattern.length), 98)
   out.set(maskToNibbles(tieMask), 102)
   out.set(maskToNibbles(restMask), 106)
@@ -112,7 +112,8 @@ export const decodePayload = (bytes) => {
     // the slide flag lives on the last step of a (held) note
     if (!held) pattern.steps[i].slide = bytes[64 + current * 2 + 1] === 1
   }
-  return { pattern, triplet: bytes[97] === 1 }
+  pattern.triplet = bytes[97] === 1
+  return { pattern, triplet: pattern.triplet }
 }
 
 // ---- .seq files (SynthTribe) ------------------------------------------------------
@@ -159,7 +160,7 @@ export const decodeSeq = (bytes) => {
   return { ...decodePayload(payload), device, version }
 }
 
-// ---- SysEx (for the future hardware link) -----------------------------------------
+// ---- SysEx (hardware link, see src/hardware/td3.js) -----------------------------------------
 
 /** 0-based hardware slot: group 0-3, section 0 (A) / 1 (B), number 0-7 */
 const slotByte = ({ section, number }) => section * 8 + number

@@ -1,7 +1,7 @@
 import { computed, reactive, toRaw, watch } from 'vue'
-import { auditionOff, auditionOn, clearVoice, resumeAudio, setParams } from '../audio/engine.js'
+import { audioTime, auditionOff, auditionOn, clearVoice, resumeAudio, sendEvents, setParams } from '../audio/engine.js'
 import { createSequencer } from '../audio/sequencer.js'
-import { FACTORY_VERSION, defaultPatch, normalizePatch, patchesEqual } from '../model/patch.js'
+import { DEFAULT_MODEL, DEFAULT_THEME, FACTORY_VERSION, MODELS, THEMES, defaultPatch, normalizePatch, patchesEqual } from '../model/patch.js'
 import {
   BANK_SIZE,
   BASE_MIDI,
@@ -11,6 +11,7 @@ import {
   TIMES,
   clonePattern,
   fromPitch,
+  isEmptyPattern,
   makePattern,
   midiOf,
   pitchOf,
@@ -19,23 +20,37 @@ import {
 } from '../model/pattern.js'
 import { decodeMidi, encodeMidi } from '../model/midi.js'
 import { decodeSeq, encodeSeq } from '../model/td3format.js'
+import { useDevice } from './device.js'
 import { KEYS, downloadBlob, exportFile, loadAll, parseImportFile, write } from './storage.js'
 
 // Single shared editor state (module singleton). Components import `useEditor()`.
 
+const { playEvents: playOnDevice, panic: devicePanic, device } = useDevice()
+
 const loaded = loadAll()
 const session = loaded.session
+
+const validChain = (c) =>
+  c && Number.isInteger(c.start) && Number.isInteger(c.end) && c.start >= 0 && c.end < BANK_SIZE && c.start < c.end
+    ? { start: c.start, end: c.end }
+    : null
 
 const clampInt = (v, lo, hi, fallback) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : fallback)
 
 const state = reactive({
+  // which hardware the editor shows and emulates: 'td3mo' or 'td3'
+  model: session.model in MODELS ? session.model : DEFAULT_MODEL,
+  // body colour: 'yellow' | 'silver' | 'black'
+  theme: session.theme in THEMES ? session.theme : DEFAULT_THEME,
   patch: session.patch ? normalizePatch(session.patch) : defaultPatch(),
   patchName: typeof session.patchName === 'string' ? session.patchName : 'INIT 303',
   presets: loaded.presets,
   bank: loaded.bank,
   slot: clampInt(session.slot, 0, BANK_SIZE - 1, 0),
   pendingSlot: null,
-  selectedStep: 0,
+  // chain: play slots start..end (inclusive) in a loop, like holding several pattern buttons
+  chain: validChain(session.chain),
+  selectedStep: clampInt(session.selectedStep, 0, MAX_STEPS - 1, 0),
   bpm: clampInt(session.bpm, 40, 300, 126),
   shuffle: Number.isFinite(session.shuffle) ? Math.min(1, Math.max(0, session.shuffle)) : 0,
   autoAdvance: session.autoAdvance !== false,
@@ -72,6 +87,10 @@ const saveSession = debounce(
       bpm: state.bpm,
       shuffle: state.shuffle,
       autoAdvance: state.autoAdvance,
+      chain: state.chain,
+      model: state.model,
+      theme: state.theme,
+      selectedStep: state.selectedStep,
       factoryVersion: FACTORY_VERSION
     }),
   300
@@ -80,13 +99,35 @@ const saveSession = debounce(
 watch(() => state.bank, saveBank, { deep: true })
 watch(() => state.presets, savePresets, { deep: true })
 watch(
-  () => [state.patch, state.patchName, state.slot, state.bpm, state.shuffle, state.autoAdvance],
+  () => [state.patch, state.patchName, state.slot, state.bpm, state.shuffle, state.autoAdvance, state.chain, state.model, state.theme, state.selectedStep],
   saveSession,
   { deep: true }
 )
 
 // push knob changes to the audio engine
-watch(() => state.patch, (patch) => setParams(toRaw(patch)), { deep: true, immediate: true })
+watch(
+  () => [state.patch, state.model],
+  () => setParams({ ...toRaw(state.patch), model: state.model === 'td3' ? 1 : 0 }),
+  { deep: true, immediate: true }
+)
+
+watch(
+  () => state.theme,
+  (theme) => {
+    if (typeof document !== 'undefined') document.documentElement.dataset.theme = theme
+  },
+  { immediate: true }
+)
+
+const setTheme = (theme) => {
+  if (theme in THEMES) state.theme = theme
+}
+
+const setModel = (model) => {
+  if (!(model in MODELS) || model === state.model) return
+  state.model = model
+  notify(`${MODELS[model].name} MODE`)
+}
 
 // ---- toast -------------------------------------------------------------------------
 
@@ -105,25 +146,42 @@ const history = { undo: [], redo: [], lastKey: null, lastAt: 0 }
 
 // Snapshot the current pattern before an edit. Edits with the same `coalesce`
 // key in quick succession (e.g. dragging over the roll) share one undo step.
+// An undo entry is a list of { slot, pattern } snapshots (usually one).
+const snapshot = (slots) => slots.map((slot) => ({ slot, pattern: clonePattern(state.bank[slot]) }))
+
+const pushUndo = (slots) => {
+  history.undo.push(snapshot(slots))
+  if (history.undo.length > 200) history.undo.shift()
+  history.redo.length = 0
+}
+
 const edit = (fn, coalesce = null) => {
   const now = performance.now()
   const merge = coalesce && coalesce === history.lastKey && now - history.lastAt < 800
-  if (!merge) {
-    history.undo.push({ slot: state.slot, pattern: clonePattern(pattern.value) })
-    if (history.undo.length > 200) history.undo.shift()
-    history.redo.length = 0
-  }
+  if (!merge) pushUndo([state.slot])
   history.lastKey = coalesce
   history.lastAt = now
   fn(pattern.value)
 }
 
+// Replace whole patterns in several slots as one undo step.
+const replaceSlots = (entries) => {
+  if (!entries.length) return
+  pushUndo(entries.map((e) => e.slot))
+  history.lastKey = null
+  entries.forEach(({ slot, pattern: p }) => {
+    state.bank[slot] = clonePattern(p)
+  })
+}
+
 const restore = (from, to) => {
   const entry = from.pop()
   if (!entry) return false
-  to.push({ slot: entry.slot, pattern: clonePattern(state.bank[entry.slot]) })
-  state.bank[entry.slot] = entry.pattern
-  if (!state.playing) state.slot = entry.slot
+  to.push(snapshot(entry.map((e) => e.slot)))
+  entry.forEach((e) => {
+    state.bank[e.slot] = e.pattern
+  })
+  if (!state.playing) state.slot = entry[0].slot
   history.lastKey = null
   return true
 }
@@ -148,9 +206,24 @@ const audition = (step, length = 0.18) => {
   clearVoice()
   auditionOn(midiOf(step), step.accent)
   auditionOff(length)
+  mirrorAudition(midiOf(step), step.accent, length)
+}
+
+// Mirror an audition note to the device when live MIDI out is on.
+const mirrorAudition = (midi, accent, length) => {
+  const t = audioTime()
+  playOnDevice([{ kind: 'on', time: t, midi, accent, slide: false }])
+  if (length !== null) playOnDevice([{ kind: 'off', time: t + length }])
 }
 
 // ---- transport -------------------------------------------------------------------
+
+const inChain = (slot) => Boolean(state.chain) && slot >= state.chain.start && slot <= state.chain.end
+
+const nextChainSlot = () => {
+  const { start, end } = state.chain
+  return state.slot >= end || state.slot < start ? start : state.slot + 1
+}
 
 const sequencer = createSequencer({
   getState: () => ({ pattern: pattern.value, bpm: state.bpm, shuffle: state.shuffle }),
@@ -158,11 +231,19 @@ const sequencer = createSequencer({
     if (state.pendingSlot !== null) {
       state.slot = state.pendingSlot
       state.pendingSlot = null
+    } else if (inChain(state.slot)) {
+      state.slot = nextChainSlot()
     }
   },
   onStep: (index) => {
     state.playStep = index
-  }
+  },
+  // WebAudio preview and/or the real TD-3 over MIDI
+  output: (events) => {
+    if (!(device.muteLocal && device.liveOut)) sendEvents(events)
+    playOnDevice(events)
+  },
+  onStop: devicePanic
 })
 
 const play = async () => {
@@ -207,6 +288,25 @@ const selectSlot = (index) => {
     state.slot = index
   }
   state.selectedStep = Math.min(state.selectedStep, state.bank[index].length - 1)
+}
+
+// Chain = a range of slots that play one after another. Shift-click on the bank sets it.
+const setChain = (start, end) => {
+  const a = Math.min(start, end)
+  const b = Math.max(start, end)
+  state.chain = a === b ? null : { start: a, end: b }
+  if (state.chain) notify(`CHAIN ${slotLabel(a)} - ${slotLabel(b)}`)
+}
+
+const clearChain = () => {
+  state.chain = null
+}
+
+const toggleTriplet = () => {
+  edit((p) => {
+    p.triplet = !p.triplet
+  })
+  notify(pattern.value.triplet ? 'TRIPLET MODE ON' : 'TRIPLET MODE OFF')
 }
 
 const copyPattern = () => {
@@ -387,6 +487,7 @@ const previewPitch = async (pitch) => {
   await ensureAudio()
   clearVoice()
   auditionOn(BASE_MIDI + pitch, false, false)
+  mirrorAudition(BASE_MIDI + pitch, false, null)
   previewing = true
 }
 
@@ -394,6 +495,7 @@ const previewRelease = () => {
   if (!previewing) return
   previewing = false
   auditionOff()
+  playOnDevice([{ kind: 'off', time: audioTime() }])
 }
 
 // ---- patches (knob presets) ---------------------------------------------------
@@ -485,11 +587,19 @@ const importBank = async (file) => {
 
 // ---- MIDI file import / export (current pattern) ------------------------------
 
+// Exports the whole chain when the current slot is part of one.
 const exportPatternMidi = () => {
-  const label = slotLabel(state.slot)
-  const bytes = encodeMidi(pattern.value, { bpm: state.bpm, name: `TD-3-MO ${label}` })
+  const chained = inChain(state.slot)
+  const slots = chained
+    ? Array.from({ length: state.chain.end - state.chain.start + 1 }, (_, i) => state.chain.start + i)
+    : [state.slot]
+  const label = chained ? `${slotLabel(slots[0])}_to_${slotLabel(slots[slots.length - 1])}` : slotLabel(state.slot)
+  const bytes = encodeMidi(
+    slots.map((i) => state.bank[i]),
+    { bpm: state.bpm, name: `TD-3-MO ${label}` }
+  )
   downloadBlob(new Blob([bytes], { type: 'audio/midi' }), `td3mo-${label}.mid`)
-  notify(`EXPORTED ${label}.MID`)
+  notify(chained ? `EXPORTED CHAIN (${slots.length} PATTERNS)` : `EXPORTED ${label}.MID`)
 }
 
 const exportPatternSeq = () => {
@@ -501,10 +611,13 @@ const exportPatternSeq = () => {
 const replacePattern = (imported) => {
   edit((p) => {
     p.length = imported.length
+    p.triplet = Boolean(imported.triplet)
     p.steps = imported.steps
   })
   state.selectedStep = 0
 }
+
+const MAX_IMPORT_PATTERNS = 16
 
 // Accepts .mid/.midi and SynthTribe .seq; the format is detected from the file content.
 const importPatternFile = async (file) => {
@@ -512,14 +625,30 @@ const importPatternFile = async (file) => {
     const bytes = new Uint8Array(await file.arrayBuffer())
     const isMidi = bytes[0] === 0x4d && bytes[1] === 0x54 && bytes[2] === 0x68 && bytes[3] === 0x64 // 'MThd'
     if (isMidi) {
-      const { pattern: imported, bpm, truncated } = decodeMidi(bytes)
-      replacePattern(imported)
+      // longer files fill the following slots and become a chain
+      const room = Math.min(MAX_IMPORT_PATTERNS, BANK_SIZE - state.slot)
+      const { patterns, bpm, truncated } = decodeMidi(bytes, { maxPatterns: room })
       if (bpm && !state.playing) state.bpm = Math.min(300, Math.max(40, bpm))
-      notify(truncated ? 'MIDI IMPORTED (FIRST BAR ONLY)' : 'MIDI IMPORTED')
+      if (patterns.length === 1) {
+        replacePattern(patterns[0])
+        notify(truncated ? 'MIDI IMPORTED (FIRST BAR ONLY)' : 'MIDI IMPORTED')
+      } else {
+        const start = state.slot
+        const end = start + patterns.length - 1
+        const overwritten = patterns.filter((_, i) => i > 0 && !isEmptyPattern(state.bank[start + i])).length
+        replaceSlots(patterns.map((p, i) => ({ slot: start + i, pattern: p })))
+        state.chain = { start, end }
+        state.selectedStep = 0
+        notify(
+          `MIDI: ${patterns.length} PATTERNS ${slotLabel(start)} TO ${slotLabel(end)}` +
+            (overwritten ? ` (${overwritten} REPLACED, UNDO WITH CMD+Z)` : '') +
+            (truncated ? ' (TRUNCATED)' : '')
+        )
+      }
     } else {
-      const { pattern: imported, triplet } = decodeSeq(bytes)
+      const { pattern: imported } = decodeSeq(bytes)
       replacePattern(imported)
-      notify(triplet ? 'SEQ IMPORTED (TRIPLET MODE NOT SUPPORTED)' : 'SEQ IMPORTED')
+      notify(imported.triplet ? 'SEQ IMPORTED (TRIPLET)' : 'SEQ IMPORTED')
     }
   } catch (error) {
     console.error(error)
@@ -535,6 +664,8 @@ export const useEditor = () => ({
   patchDirty,
   notify,
   ensureAudio,
+  setModel,
+  setTheme,
   // transport
   play,
   stop,
@@ -551,6 +682,11 @@ export const useEditor = () => ({
   setLength,
   undo,
   redo,
+  replaceSlots,
+  setChain,
+  clearChain,
+  inChain,
+  toggleTriplet,
   // steps
   selectStep,
   moveSelection,

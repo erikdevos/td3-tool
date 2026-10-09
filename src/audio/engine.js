@@ -69,3 +69,12 @@ export const auditionOff = (delay = 0) => {
   if (!ctx) return
   sendEvents([{ kind: 'off', time: ctx.currentTime + delay }])
 }
+
+// AudioContext time -> performance.now() time, for timestamped Web MIDI messages that
+// should line up with what the speakers play (getOutputTimestamp includes output latency).
+export const audioTimeToMs = (time) => {
+  if (!ctx) return performance.now()
+  const ts = typeof ctx.getOutputTimestamp === 'function' ? ctx.getOutputTimestamp() : null
+  if (ts && ts.performanceTime) return ts.performanceTime + (time - ts.contextTime) * 1000
+  return performance.now() + (time - ctx.currentTime) * 1000
+}

@@ -10,7 +10,9 @@ import {
 export const KEYS = {
   bank: 'td3mo.bank.v2',
   presets: 'td3mo.presets.v2',
-  session: 'td3mo.session.v2'
+  session: 'td3mo.session.v2',
+  device: 'td3mo.device.v1',
+  ui: 'td3mo.ui.v1'
 }
 
 // Keys used by the first prototype; migrated once if present.
@@ -22,7 +24,7 @@ const LEGACY = {
 export const FILE_FORMAT = 'td3mo-editor'
 export const FILE_VERSION = 2
 
-const read = (key) => {
+export const read = (key) => {
   try {
     const raw = localStorage.getItem(key)
     return raw ? JSON.parse(raw) : null

@@ -1,5 +1,5 @@
 import { audioTime, clearVoice, resumeAudio, sendEvents } from './engine.js'
-import { midiOf } from '../model/pattern.js'
+import { midiOf, stepBeats } from '../model/pattern.js'
 
 // Lookahead scheduler ("A tale of two clocks"): a coarse JS timer wakes up
 // every 25 ms and schedules all steps that fall inside the next 120 ms with
@@ -14,8 +14,10 @@ const GATE_LENGTH = 0.5 // 303 gate is roughly half a 16th step
  * @param {() => {pattern, bpm, shuffle}} hooks.getState  read live state each step
  * @param {() => void} hooks.onWrap   called when the pattern loops (pattern change point)
  * @param {(step:number) => void} hooks.onStep  called (in sync with audio) when a step sounds
+ * @param {(events:object[]) => void} [hooks.output]  where voice events go (default: the WebAudio voice)
+ * @param {() => void} [hooks.onStop]  called after the sequencer stopped (silence external gear here)
  */
-export const createSequencer = ({ getState, onWrap, onStep }) => {
+export const createSequencer = ({ getState, onWrap, onStep, output = sendEvents, onStop = () => {} }) => {
   let timer = null
   let raf = null
   let nextTime = 0
@@ -25,8 +27,8 @@ export const createSequencer = ({ getState, onWrap, onStep }) => {
 
   const scheduleStep = (index, time) => {
     const { pattern, bpm, shuffle } = getState()
-    const stepDur = 60 / bpm / 4
-    const swing = index % 2 === 1 ? shuffle * stepDur * 0.33 : 0
+    const stepDur = (60 / bpm) * stepBeats(pattern)
+    const swing = index % 2 === 1 && !pattern.triplet ? shuffle * stepDur * 0.33 : 0
     const t = time + swing
     const step = pattern.steps[index]
     const next = pattern.steps[(index + 1) % pattern.length]
@@ -50,7 +52,7 @@ export const createSequencer = ({ getState, onWrap, onStep }) => {
       gateOpen = false
     }
 
-    sendEvents(events)
+    output(events)
     uiQueue.push({ index, time: t })
     return stepDur
   }
@@ -97,6 +99,7 @@ export const createSequencer = ({ getState, onWrap, onStep }) => {
     uiQueue = []
     gateOpen = false
     clearVoice()
+    onStop()
   }
 
   return { start, stop, isRunning: () => Boolean(timer) }

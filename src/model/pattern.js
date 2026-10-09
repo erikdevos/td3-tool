@@ -43,13 +43,16 @@ export const makeStep = (overrides = {}) => ({
   ...overrides
 })
 
+// triplet: steps are 16th-note triplets (6 per beat) instead of 16ths, like the TD-3's triplet mode
 export const makePattern = () => ({
   length: MAX_STEPS,
+  triplet: false,
   steps: Array.from({ length: MAX_STEPS }, () => makeStep())
 })
 
 export const clonePattern = (pattern) => ({
   length: pattern.length,
+  triplet: Boolean(pattern.triplet),
   steps: pattern.steps.map((s) => ({ ...s }))
 })
 
@@ -85,6 +88,7 @@ export const normalizePattern = (raw) => {
   const pattern = makePattern()
   if (!raw || typeof raw !== 'object') return pattern
   if (Number.isInteger(raw.length)) pattern.length = Math.min(MAX_STEPS, Math.max(1, raw.length))
+  pattern.triplet = raw.triplet === true
   if (Array.isArray(raw.steps)) {
     for (let i = 0; i < MAX_STEPS; i += 1) pattern.steps[i] = normalizeStep(raw.steps[i])
   }
@@ -156,3 +160,8 @@ export const randomPattern = (length = MAX_STEPS) => {
   }
   return pattern
 }
+
+/** Duration of one step in beats (quarter notes). */
+export const stepBeats = (pattern) => (pattern.triplet ? 1 / 6 : 1 / 4)
+
+export const isEmptyPattern = (pattern) => pattern.steps.every((s) => s.time === 'rest')

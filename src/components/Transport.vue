@@ -60,13 +60,13 @@ const shuffle = computed({
 .transport {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 12px;
 }
 
 .tempo {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .readout {

@@ -1,12 +1,16 @@
 <script setup>
 import { ref, watch } from 'vue'
-import { hardwareStatus } from '../hardware/td3.js'
+import { MODELS, THEMES } from '../model/patch.js'
+import { useDevice } from '../store/device.js'
 import { useEditor } from '../store/editor.js'
 
-const emit = defineEmits(['help'])
+const emit = defineEmits(['help', 'device'])
+const { device } = useDevice()
 
 const {
   state,
+  setModel,
+  setTheme,
   patchDirty,
   loadPreset,
   savePreset,
@@ -48,9 +52,33 @@ const save = () => savePreset(nameDraft.value)
 
 <template>
   <header class="bar">
-    <div class="brand">
-      <span class="brand-model">TD-3-MO</span>
-      <span class="brand-sub">Editor</span>
+    <div class="brand" role="group" aria-label="Hardware model">
+      <button
+        v-for="(m, key) in MODELS"
+        :key="key"
+        type="button"
+        :class="['model', { on: state.model === key }]"
+        :aria-pressed="state.model === key"
+        :title="`Edit and emulate the ${m.name}`"
+        @click="setModel(key)"
+      >
+        {{ m.name }}
+      </button>
+    </div>
+
+    <div class="themes" role="radiogroup" aria-label="Body colour">
+      <button
+        v-for="(t, key) in THEMES"
+        :key="key"
+        type="button"
+        role="radio"
+        :class="['swatch', { on: state.theme === key }]"
+        :style="{ background: t.swatch }"
+        :aria-checked="state.theme === key"
+        :aria-label="t.name"
+        :title="t.name"
+        @click="setTheme(key)"
+      ></button>
     </div>
 
     <div class="patch" aria-label="Patch memory">
@@ -100,13 +128,18 @@ const save = () => savePreset(nameDraft.value)
       <button type="button" title="Download all patterns and patches as a JSON file" @click="exportBank">Export</button>
       <button type="button" title="Load a previously exported JSON file" @click="fileInput.click()">Import</button>
       <input ref="fileInput" type="file" accept="application/json,.json" hidden @change="onFile" />
+    </div>
+
+    <div class="files">
+      <span class="bar-label">DEVICE</span>
       <button
         type="button"
         class="hw"
-        disabled
-        :title="hardwareStatus.note"
+        title="Connect a TD-3 over USB: live play, receive and send patterns"
+        @click="emit('device')"
       >
-        Send to TD-3
+        <span :class="['led', { on: device.status === 'ready' && (Boolean(device.product) || device.liveOut) }]"></span>
+        TD-3 USB
       </button>
     </div>
 
@@ -132,26 +165,50 @@ const save = () => savePreset(nameDraft.value)
 
 .brand {
   display: flex;
-  flex-direction: column;
-  line-height: 1;
+  padding: 2px;
+  border-radius: 6px;
+  background: #0b0b0c;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
-.brand-model {
-  font-family: var(--font-panel);
+.brand button.model {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  box-shadow: none;
   font-weight: 800;
   font-style: italic;
-  font-size: 20px;
+  font-size: 15px;
   letter-spacing: 0.02em;
-  color: var(--chassis);
+  text-transform: none;
+  color: var(--print-dim);
 }
 
-.brand-sub {
-  margin-top: 3px;
-  font-family: var(--font-panel);
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--print-dim);
+.brand button.model.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.themes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: -6px;
+}
+
+.themes button.swatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid #000;
+  border-radius: 50%;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+.themes button.swatch.on {
+  box-shadow: 0 0 0 2px #0b0b0c, 0 0 0 3.5px var(--accent);
 }
 
 .patch,
@@ -173,7 +230,7 @@ const save = () => savePreset(nameDraft.value)
   font-weight: 800;
   font-size: 10px;
   letter-spacing: 0.14em;
-  color: var(--chassis);
+  color: var(--accent);
 }
 
 button {
@@ -248,6 +305,12 @@ select.lcd {
 .dirty.on {
   background: #ff6a3a;
   box-shadow: 0 0 6px rgba(255, 106, 58, 0.8);
+}
+
+.hw {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .help {

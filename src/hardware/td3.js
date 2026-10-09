@@ -1,53 +1,169 @@
-// TD-3-MO hardware bridge — NOT IMPLEMENTED YET.
+// TD-3 / TD-3-MO hardware link over Web MIDI (USB-MIDI or a MIDI interface).
 //
-// Everything that will talk to the real device lives in this folder.
-// See ./README.md for the plan, the data mapping and what still has to be verified.
+// Two independent features:
+//   1. Live notes: the editor's sequencer plays the real synth as a MIDI instrument
+//      (accent = high velocity, slide = overlapping notes). Nothing is stored on the device.
+//   2. Pattern memory over SysEx: read a slot, write a slot (with backup + read-back check).
 //
-// The editor's data model (src/model/pattern.js) was designed to map 1:1 onto the
-// hardware pattern memory, so this module only needs to translate, not restructure.
+// No Vue in here; the reactive wrapper lives in src/store/device.js.
+// Message formats: see src/model/td3format.js and src/hardware/README.md.
 
-import { encodePatternSysex as encodePatternSysexFn } from '../model/td3format.js'
+import { PAYLOAD_SIZE, TD3_MODEL_ID, encodePatternSysex, requestPatternSysex } from '../model/td3format.js'
 
-export const hardwareStatus = {
-  implemented: false,
-  webMidi: typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator,
-  note: 'Hardware transfer is not implemented yet — see src/hardware/README.md'
-}
+const BEHRINGER = [0xf0, 0x00, 0x20, 0x32, 0x00, 0x01]
+const CMD_PRODUCT = 0x06
+const CMD_PRODUCT_REPLY = 0x07
+const CMD_FIRMWARE = 0x08
+const CMD_FIRMWARE_REPLY = 0x09
+const CMD_PATTERN = 0x78
 
-/**
- * Ask the browser for MIDI access (SysEx needs explicit permission).
- * Safe to call later from a user action; not used by the UI yet.
- * @returns {Promise<MIDIAccess>}
- */
+export const webMidiSupported = () => typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator
+
+/** Ask the browser for MIDI access with SysEx (shows a permission prompt). */
 export const requestMidiAccess = () => {
-  if (!hardwareStatus.webMidi) return Promise.reject(new Error('Web MIDI is not available in this browser'))
+  if (!webMidiSupported()) return Promise.reject(new Error('Web MIDI is not available in this browser (use Chrome or Edge)'))
   return navigator.requestMIDIAccess({ sysex: true })
 }
 
-/**
- * List MIDI ports whose name looks like a TD-3.
- * @param {MIDIAccess} access
- */
-export const findTd3Ports = (access) => {
-  const match = (port) => /td-?3/i.test(port.name || '')
-  return {
-    inputs: [...access.inputs.values()].filter(match),
-    outputs: [...access.outputs.values()].filter(match)
-  }
+export const looksLikeTd3 = (name = '') => /td-?3/i.test(name)
+
+/** All ports as plain objects, TD-3 ports first. */
+export const listPorts = (access) => {
+  const map = (ports) =>
+    [...ports.values()]
+      .map((p) => ({ id: p.id, name: p.name || p.id, td3: looksLikeTd3(p.name) }))
+      .sort((a, b) => Number(b.td3) - Number(a.td3))
+  return { inputs: map(access.inputs), outputs: map(access.outputs) }
 }
 
-// Pattern SysEx encoding/decoding lives in src/model/td3format.js (shared with .seq files).
-// Read the UNVERIFIED notes at the top of that file before sending anything to a device.
-export { encodePatternSysex as encodePattern, decodePatternSysex as decodePattern, requestPatternSysex } from '../model/td3format.js'
+// ---- SysEx request / response -------------------------------------------------------
+
+const isBehringer = (data, modelId) => data.length > 8 && BEHRINGER.every((b, i) => data[i] === b) && data[6] === modelId
 
 /**
- * Send a pattern to the device.
- * TODO: wire to a UI action ("Send to TD-3" button in EditorBar.vue) after verifying
- * against a dump from a real unit, and back up the device's patterns first.
- * @param {MIDIOutput} output
- * @param {object} pattern editor pattern
- * @param {{group:number, section:number, number:number}} slot
+ * Small request/response helper on one input + output pair.
+ * Only one request is in flight at a time (the TD-3 answers in order anyway).
  */
-export const sendPattern = (output, pattern, slot) => {
-  output.send(encodePatternSysexFn(pattern, slot))
+export const createSysexClient = (input, output, modelId = TD3_MODEL_ID) => {
+  let queue = Promise.resolve()
+
+  const exchange = (message, match, timeoutMs) =>
+    new Promise((resolve, reject) => {
+      const onMessage = (event) => {
+        const data = event.data
+        if (data[0] !== 0xf0 || !isBehringer(data, modelId) || !match(data)) return
+        cleanup()
+        resolve(data)
+      }
+      const timer = setTimeout(() => {
+        cleanup()
+        reject(new Error('No reply from the device'))
+      }, timeoutMs)
+      const cleanup = () => {
+        clearTimeout(timer)
+        input.removeEventListener('midimessage', onMessage)
+      }
+      input.addEventListener('midimessage', onMessage)
+      output.send(message)
+    })
+
+  // serialize requests
+  const request = (message, match, timeoutMs = 1500) => {
+    const run = queue.then(() => exchange(message, match, timeoutMs))
+    queue = run.catch(() => {})
+    return run
+  }
+
+  const productName = async () => {
+    const reply = await request(new Uint8Array([...BEHRINGER, modelId, CMD_PRODUCT, 0xf7]), (d) => d[7] === CMD_PRODUCT_REPLY)
+    let name = ''
+    for (let i = 8; i < reply.length - 1 && reply[i] !== 0; i += 1) name += String.fromCharCode(reply[i])
+    return name
+  }
+
+  const firmware = async () => {
+    const reply = await request(
+      new Uint8Array([...BEHRINGER, modelId, CMD_FIRMWARE, 0x00, 0xf7]),
+      (d) => d[7] === CMD_FIRMWARE_REPLY
+    )
+    return [...reply.subarray(9, reply.length - 1)].join('.')
+  }
+
+  /** Read one pattern slot. Resolves with the full SysEx message (decode with decodePatternSysex). */
+  const readPattern = (slot) => {
+    const message = requestPatternSysex(slot, modelId)
+    const [group, index] = [message[8], message[9]]
+    return request(
+      message,
+      (d) => d[7] === CMD_PATTERN && d[8] === group && d[9] === index && d.length >= 12 + PAYLOAD_SIZE,
+      2000
+    )
+  }
+
+  /** Write one pattern slot. The TD-3 sends no documented acknowledgement, so verify by reading back. */
+  const writePattern = async (slot, pattern) => {
+    await queue
+    output.send(encodePatternSysex(pattern, slot, modelId))
+    await new Promise((r) => setTimeout(r, 250)) // give the device time to store it
+  }
+
+  return { request, productName, firmware, readPattern, writePattern }
+}
+
+/** Payload bytes of a pattern SysEx message, for comparing what was written with what was read back. */
+export const payloadOf = (message) => message.subarray(12, 12 + PAYLOAD_SIZE)
+
+// ---- live notes ---------------------------------------------------------------------
+
+export const ACCENT_VELOCITY = 127 // the TD-3 treats velocities above a configurable threshold as accent
+export const NORMAL_VELOCITY = 64
+const SLIDE_OVERLAP_MS = 4
+
+/**
+ * Turns the sequencer's voice events ({kind:'on'|'off', time, midi, accent, slide}) into
+ * timestamped MIDI notes. `toMs(audioTime)` converts AudioContext time to performance.now() time.
+ */
+export const createNotePlayer = (getOutput, getChannel) => {
+  let sounding = null // MIDI key currently held on the device
+
+  const send = (bytes, at) => {
+    const out = getOutput()
+    if (out) out.send(bytes, at)
+  }
+  const ch = () => (getChannel() - 1) & 0x0f
+  const noteOn = (key, vel, at) => send([0x90 | ch(), key & 0x7f, vel], at)
+  const noteOff = (key, at) => send([0x80 | ch(), key & 0x7f, 0], at)
+
+  const play = (events, toMs) => {
+    for (const ev of events) {
+      const at = toMs(ev.time)
+      if (ev.kind === 'on') {
+        const vel = ev.accent ? ACCENT_VELOCITY : NORMAL_VELOCITY
+        if (ev.slide && sounding !== null) {
+          if (sounding === ev.midi) continue // slide into the same key: just keep holding
+          noteOn(ev.midi, vel, at) // new note first, then release the old one = legato slide
+          noteOff(sounding, at + SLIDE_OVERLAP_MS)
+        } else {
+          if (sounding !== null) noteOff(sounding, Math.max(0, at - 1))
+          noteOn(ev.midi, vel, at)
+        }
+        sounding = ev.midi
+      } else if (ev.kind === 'off' && sounding !== null) {
+        noteOff(sounding, at)
+        sounding = null
+      }
+    }
+  }
+
+  // Stop: drop everything still queued and silence the device.
+  const panic = () => {
+    const out = getOutput()
+    if (!out) return
+    if (typeof out.clear === 'function') out.clear()
+    if (sounding !== null) out.send([0x80 | ch(), sounding, 0])
+    out.send([0xb0 | ch(), 123, 0]) // all notes off
+    sounding = null
+  }
+
+  return { play, panic }
 }

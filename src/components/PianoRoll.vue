@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { BASE_MIDI, MAX_PITCH, MAX_STEPS, MIN_PITCH, midiName, pitchOf } from '../model/pattern.js'
 import { useEditor } from '../store/editor.js'
 
@@ -22,6 +22,9 @@ const {
   previewPitch,
   previewRelease
 } = useEditor()
+
+// steps per beat: 4 sixteenths, or 3 sixteenth-triplets per half beat in triplet mode
+const beatSteps = computed(() => (pattern.value.triplet ? 3 : 4))
 
 const ROWS = MAX_PITCH - MIN_PITCH + 1 // 37 semitones
 const BLACK = new Set([1, 3, 6, 8, 10])
@@ -76,6 +79,20 @@ const headLabel = (i) => {
 // ---- pointer handling ---------------------------------------------------------------
 
 const roll = ref(null)
+const scroller = ref(null)
+
+// The roll is taller than its viewport (rows are 2x the old height) and scrolls vertically.
+// Centre the view on the pattern's notes when it opens or the slot changes.
+const centerOnNotes = () => {
+  const el = scroller.value
+  if (!el) return
+  const pitches = pattern.value.steps.slice(0, pattern.value.length).filter((s) => s.time === 'note').map(pitchOf)
+  const mid = pitches.length ? (Math.min(...pitches) + Math.max(...pitches)) / 2 : 6
+  const rowH = el.scrollHeight / ROWS
+  el.scrollTop = (rowY(Math.round(mid)) + 0.5) * rowH - el.clientHeight / 2
+}
+onMounted(centerOnNotes)
+watch(() => state.slot, () => nextTick(centerOnNotes))
 const hover = ref(null) // { step, pitch, zone }
 const drag = ref(null)
 let dragId = 0
@@ -196,14 +213,14 @@ const laneState = (i, flag) => {
 
 <template>
   <div class="pr" :style="{ '--rows': ROWS }">
-    <!-- header: step numbers, playhead LEDs, note names -->
+    <!-- header: one line per step: playhead LED, step number, note name -->
     <div class="grid head">
       <span class="gutter-title">STEP</span>
       <button
         v-for="i in MAX_STEPS"
         :key="`h${i}`"
         type="button"
-        :class="['head-cell', { sel: state.selectedStep === i - 1, off: i - 1 >= pattern.length, beat: (i - 1) % 4 === 0 }]"
+        :class="['head-cell', { sel: state.selectedStep === i - 1, off: i - 1 >= pattern.length, beat: (i - 1) % beatSteps === 0 }]"
         :aria-label="`Select step ${i}`"
         @click="selectStep(i - 1)"
       >
@@ -214,7 +231,7 @@ const laneState = (i, flag) => {
     </div>
 
     <!-- piano roll -->
-    <div class="grid body">
+    <div ref="scroller" class="grid body">
       <div class="piano" aria-label="Preview keys">
         <div
           v-for="r in rows"
@@ -244,7 +261,7 @@ const laneState = (i, flag) => {
         <svg class="grid-bg" viewBox="0 0 16 37" preserveAspectRatio="none" aria-hidden="true">
           <rect v-for="r in rows" :key="`r${r.pitch}`" x="0" :y="r.y" width="16" height="1" :class="['row', { black: r.black }]" />
           <line v-for="r in rows.filter((x) => x.c)" :key="`c${r.pitch}`" x1="0" x2="16" :y1="r.y + 1" :y2="r.y + 1" class="c-line" />
-          <line v-for="i in 15" :key="`b${i}`" :x1="i" :x2="i" y1="0" y2="37" :class="['beat-line', { strong: i % 4 === 0 }]" />
+          <line v-for="i in 15" :key="`b${i}`" :x1="i" :x2="i" y1="0" y2="37" :class="['beat-line', { strong: i % beatSteps === 0 }]" />
           <rect :x="state.selectedStep" y="0" width="1" height="37" class="sel-col" />
           <rect v-if="state.playing && state.playStep >= 0" :x="state.playStep" y="0" width="1" height="37" class="play-col" />
           <rect v-if="hover && hover.zone !== 'off'" x="0" :y="rowY(hover.pitch)" width="16" height="1" class="hover-row" />
@@ -318,8 +335,10 @@ const laneState = (i, flag) => {
 
 <style scoped>
 .pr {
-  --gutter: 54px;
-  --roll-h: 333px;
+  --gutter: 60px; /* piano key column */
+  --row-h: 18px; /* height of one semitone row = note height */
+  --roll-h: calc(var(--rows) * var(--row-h)); /* full 3-octave roll, scrolls */
+  --view-h: min(var(--roll-h), 80vh); /* visible part: whole roll if it fits, max 80% of the screen */
   display: grid;
   gap: 5px;
   user-select: none;
@@ -347,10 +366,12 @@ const laneState = (i, flag) => {
 
 /* header */
 .head-cell {
-  display: grid;
-  justify-items: center;
-  gap: 2px;
-  padding: 2px 0 4px;
+  display: flex;
+  flex-wrap: wrap; /* narrow screens: falls back to stacking */
+  align-items: center;
+  justify-content: center;
+  gap: 2px 4px;
+  padding: 2px 0 3px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: none;
@@ -375,11 +396,17 @@ const laneState = (i, flag) => {
 }
 
 .head-cell .note-name {
-  min-height: 12px;
+  /* thin divider between step number and note name */
+  padding-left: 4px;
+  border-left: 1px solid var(--ink-soft);
   font-family: var(--font-display);
   font-size: 11px;
   line-height: 1;
   color: var(--ink);
+}
+
+.head-cell .note-name:empty {
+  display: none;
 }
 
 .head-cell.sel {
@@ -392,7 +419,23 @@ const laneState = (i, flag) => {
 
 /* roll body */
 .body {
-  align-items: stretch;
+  align-items: start;
+  height: var(--view-h);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 176, 32, 0.35) transparent;
+}
+
+/* keep header and lanes aligned with the scrolling body when scrollbars take space */
+.grid {
+  scrollbar-gutter: stable;
+}
+
+.head,
+.lane {
+  overflow: hidden;
 }
 
 .piano {
@@ -418,7 +461,7 @@ const laneState = (i, flag) => {
 
 .pkey.black {
   background: linear-gradient(90deg, #0c0c0c, #2a2a2b 60%, #1a1a1a);
-  margin-right: 18px;
+  margin-right: 22px;
   border-radius: 0 2px 2px 0;
   border-bottom-color: #000;
 }
@@ -619,7 +662,8 @@ const laneState = (i, flag) => {
 @media (max-width: 760px) {
   .pr {
     --gutter: 34px;
-    --roll-h: 300px;
+    --view-h: 300px;
+    --row-h: 16px;
   }
 
   .grid {
@@ -633,6 +677,12 @@ const laneState = (i, flag) => {
   .pkey span,
   .head-cell .note-name {
     font-size: 8px;
+  }
+
+  /* stacked on narrow screens: no divider */
+  .head-cell .note-name {
+    padding-left: 0;
+    border-left: 0;
   }
 
   .gutter-title {

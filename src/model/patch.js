@@ -1,4 +1,6 @@
 // Patch = the position of every front-panel control.
+// Two models share one patch: the regular TD-3 (main row + distortion) and the TD-3-MO
+// (main row + "Modded Out" row). Controls of the other model are kept but ignored.
 // Note: the real TD-3-MO is fully analog and does NOT store knob positions.
 // Patches only exist in this editor (for the WebAudio preview and for recall notes).
 
@@ -20,7 +22,12 @@ export const KNOBS = {
   slideTime: { label: 'Slide Time', default: 0.28 },
   filterTracking: { label: 'Filter Tracking', default: 0 },
   filterFm: { label: 'Filter FM', default: 0 },
-  overdrive: { label: 'Overdrive', default: 0.25 }
+  overdrive: { label: 'Overdrive', default: 0.25 },
+
+  // Regular TD-3: built-in distortion (Boss DS-1 style: dist, tone, level + on/off)
+  distDrive: { label: 'Dist', default: 0.5 },
+  distTone: { label: 'Tone', default: 0.5 },
+  distLevel: { label: 'Level', default: 0.5 }
 }
 
 // Multi-position switches; value is the index into `positions`.
@@ -29,11 +36,28 @@ export const SWITCHES = {
   accentSweep: { label: 'Accent Sweep', positions: ['OFF', 'NORM', 'HIGH'], default: 1 },
   sweepSpeed: { label: 'Sweep Speed', positions: ['FAST', 'NORM', 'SLOW'], default: 1 },
   muffler: { label: 'Muffler', positions: ['OFF', 'SOFT', 'HARD'], default: 0 },
-  subOsc: { label: 'Sub Osc', positions: ['OFF', 'LOW', 'MID', 'HIGH'], default: 0 }
+  subOsc: { label: 'Sub Osc', positions: ['OFF', 'LOW', 'MID', 'HIGH'], default: 0 },
+  distOn: { label: 'Distortion', positions: ['OFF', 'ON'], default: 0 }
 }
+
+export const MODELS = {
+  td3mo: { name: 'TD-3-MO', description: 'Modded Out Analog Bass Line Synthesizer' },
+  td3: { name: 'TD-3', description: 'Analog Bass Line Synthesizer' }
+}
+export const DEFAULT_MODEL = 'td3mo'
+
+// Body colours, independent of the model (the TD-3 exists in many colours)
+export const THEMES = {
+  yellow: { name: 'Yellow (MO)', swatch: '#f2b20f' },
+  silver: { name: 'Silver (303)', swatch: 'linear-gradient(135deg, #eef0f1, #a9acae)' },
+  black: { name: 'Black (BK)', swatch: '#1c1c1e' }
+}
+export const DEFAULT_THEME = 'yellow'
 
 export const MAIN_ROW = ['tuning', 'cutoff', 'resonance', 'envMod', 'decay', 'accent']
 export const MO_ROW = ['normalDecay', 'accentDecay', 'softAttack', 'slideTime', 'filterTracking', 'filterFm', 'overdrive']
+export const MO_SWITCHES = ['accentSweep', 'sweepSpeed', 'muffler', 'subOsc']
+export const DIST_ROW = ['distDrive', 'distTone', 'distLevel']
 
 export const defaultPatch = () => {
   const patch = {}
@@ -112,9 +136,13 @@ export const factoryPresets = () => [
     ['WARM ROUND', { cutoff: 0.3, resonance: 0.35, envMod: 0.3, softAttack: 0.6, overdrive: 0.3 }],
     ['DIRTY ELECTRO', { waveform: 1, cutoff: 0.33, resonance: 0.6, envMod: 0.7, overdrive: 0.65, muffler: 1, subOsc: 1 }],
     ['THIN AND NASAL', { cutoff: 0.55, resonance: 0.88, envMod: 0.2, filterTracking: 1 }],
-    ['ACCENT MONSTER', { cutoff: 0.2, resonance: 0.8, envMod: 0.4, accent: 1, accentSweep: 2, sweepSpeed: 0 }]
+    ['ACCENT MONSTER', { cutoff: 0.2, resonance: 0.8, envMod: 0.4, accent: 1, accentSweep: 2, sweepSpeed: 0 }],
+    // v3: patches for the regular TD-3 (main row + distortion; the MO controls are ignored there)
+    ['TD3 CLASSIC', { cutoff: 0.32, resonance: 0.78, envMod: 0.62, decay: 0.45, accent: 0.75 }],
+    ['TD3 DS-1 ACID', { cutoff: 0.3, resonance: 0.82, envMod: 0.55, decay: 0.4, accent: 0.8, distOn: 1, distDrive: 0.65, distTone: 0.55, distLevel: 0.45 }],
+    ['TD3 FUZZ SQUARE', { waveform: 1, cutoff: 0.26, resonance: 0.6, envMod: 0.45, decay: 0.3, distOn: 1, distDrive: 0.9, distTone: 0.35, distLevel: 0.4 }]
   ].map(([name, params]) => ({ name, params: { ...defaultPatch(), ...params } }))
 ]
 
 // Bump when factory presets are added, so existing users receive the new ones.
-export const FACTORY_VERSION = 2
+export const FACTORY_VERSION = 3

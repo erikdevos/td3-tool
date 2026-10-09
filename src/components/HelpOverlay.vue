@@ -22,9 +22,15 @@ const MOUSE = [
   ['Empty roll cell', 'Click to add a note, drag to paint several'],
   ['Note', 'Drag up/down to change pitch, click to delete (or right-click)'],
   ['Note right edge', 'Drag to make the note longer or shorter'],
+  ['Scroll in the roll', 'Show other octaves (the view centres on the notes when you switch pattern)'],
   ['Piano keys (left)', 'Hold to preview a pitch'],
   ['Accent / slide lanes', 'Toggle per step; slide glides into the next note'],
-  ['Pattern buttons', 'While running, the new pattern starts when the current one ends']
+  ['Pattern buttons', 'While running, the new pattern starts when the current one ends'],
+  ['Shift-click a number', 'Chain from the current slot to that one; the chain plays in a loop'],
+  ['Triplet', 'Steps become 16th-note triplets (6 per beat)'],
+  ['TD-3 / TD-3-MO (top left)', 'Switch model: panel, sound and name follow the chosen hardware'],
+  ['Colour dots (top left)', 'Body colour: yellow (MO), silver (303) or black (BK)'],
+  ['TD-3 USB (top bar)', 'Play the real synth, receive and send patterns over USB']
 ]
 </script>
 

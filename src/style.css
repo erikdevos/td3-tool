@@ -26,12 +26,73 @@
   /* fine plastic grain */
   --chassis-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.06 0 0 0 0 0 0 0 0 0.09 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
 
+  /* accent colour for UI outside the body (top bar, dialogs) */
+  --accent: #f2b20f;
+  --accent-ink: #161411;
+  /* body edge light / shade (bevels, grooves) */
+  --body-hi: rgba(255, 236, 170, 0.7);
+  --body-lo: rgba(120, 75, 0, 0.35);
+  /* knobs: skirt gradient, knurl, cap, pointer */
+  --knob-skirt-1: #f7c443;
+  --knob-skirt-2: #d99a0a;
+  --knob-skirt-3: #a86f02;
+  --knob-skirt-4: #6a4400;
+  --knob-edge: #5a3a00;
+  --knob-knurl: rgba(90, 55, 0, 0.45);
+  --knob-pointer: #e2241a;
+
   color-scheme: dark;
   font-family: var(--font-panel);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Colour themes (data-theme on <html>). Yellow = the defaults above. */
+
+/* Silver: brushed aluminium like the TB-303 / silver TD-3, black knobs with a white line */
+:root[data-theme='silver'] {
+  --chassis: #c8cacb;
+  --chassis-light: #e6e8e9;
+  --chassis-deep: #a3a6a8;
+  --ink: #141414;
+  --ink-soft: rgba(20, 20, 20, 0.6);
+  --ink-line: rgba(20, 20, 20, 0.8);
+  --chassis-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='120'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.22 0'/%3E%3C/filter%3E%3Crect width='400' height='120' filter='url(%23b)'/%3E%3C/svg%3E");
+  --accent: #d9dbdd;
+  --accent-ink: #141414;
+  --body-hi: rgba(255, 255, 255, 0.85);
+  --body-lo: rgba(40, 44, 48, 0.35);
+  --knob-skirt-1: #4a4a4a;
+  --knob-skirt-2: #262626;
+  --knob-skirt-3: #141414;
+  --knob-skirt-4: #050505;
+  --knob-edge: #000;
+  --knob-knurl: rgba(255, 255, 255, 0.12);
+  --knob-pointer: #f4f4f4;
+}
+
+/* BK: matte black body with white print, aluminium knob skirts */
+:root[data-theme='black'] {
+  --chassis: #1c1c1e;
+  --chassis-light: #2a2a2d;
+  --chassis-deep: #121214;
+  --ink: #ecebe6;
+  --ink-soft: rgba(236, 235, 230, 0.6);
+  --ink-line: rgba(236, 235, 230, 0.7);
+  --chassis-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  --accent: #ecebe6;
+  --accent-ink: #141414;
+  --body-hi: rgba(255, 255, 255, 0.12);
+  --body-lo: rgba(0, 0, 0, 0.6);
+  --knob-skirt-1: #f2f3f4;
+  --knob-skirt-2: #c3c6c9;
+  --knob-skirt-3: #8b8f93;
+  --knob-skirt-4: #4b4e51;
+  --knob-edge: #2a2c2e;
+  --knob-knurl: rgba(0, 0, 0, 0.25);
+  --knob-pointer: #e2241a;
 }
 
 * {

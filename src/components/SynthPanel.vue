@@ -1,16 +1,14 @@
 <script setup>
-import { KNOBS, MAIN_ROW, MO_ROW, SWITCHES } from '../model/patch.js'
+import { DIST_ROW, KNOBS, MAIN_ROW, MO_ROW, MO_SWITCHES, SWITCHES } from '../model/patch.js'
 import { useEditor } from '../store/editor.js'
 import Knob from './hw/Knob.vue'
 import SlideSwitch from './hw/SlideSwitch.vue'
 
 const { state, setParam } = useEditor()
-
-const MO_SWITCHES = ['accentSweep', 'sweepSpeed', 'muffler', 'subOsc']
 </script>
 
 <template>
-  <!-- One row: classic TB-303 / TD-3 controls (1/2) + "Modded Out" section (1/2) -->
+  <!-- One row: classic TB-303 / TD-3 controls (1/2) + "Modded Out" (TD-3-MO) or distortion (TD-3) (1/2) -->
   <section class="synth" aria-label="Synth controls">
     <div class="main">
       <div class="cell cell--wave">
@@ -44,8 +42,31 @@ const MO_SWITCHES = ['accentSweep', 'sweepSpeed', 'muffler', 'subOsc']
       </div>
     </div>
 
-    <div class="mo">
+    <div v-if="state.model === 'td3'" class="mo dist">
+      <div class="mo-badge" aria-hidden="true">Distortion</div>
+      <div class="dist-row">
+        <SlideSwitch
+          :model-value="state.patch.distOn"
+          :positions="SWITCHES.distOn.positions"
+          label="On / Off"
+          @update:model-value="setParam('distOn', $event)"
+        />
+        <Knob
+          v-for="key in DIST_ROW"
+          :key="key"
+          :model-value="state.patch[key]"
+          :label="KNOBS[key].label"
+          :default-value="KNOBS[key].default"
+          size="md"
+          :class="{ bypassed: !state.patch.distOn }"
+          @update:model-value="setParam(key, $event)"
+        />
+      </div>
+    </div>
+
+    <div v-else class="mo">
       <div class="mo-badge" aria-hidden="true">Modded Out</div>
+      <!-- all seven MO knobs on one row (slightly smaller), horizontal switches below -->
       <div class="mo-grid">
         <Knob
           v-for="key in MO_ROW"
@@ -53,15 +74,18 @@ const MO_SWITCHES = ['accentSweep', 'sweepSpeed', 'muffler', 'subOsc']
           :model-value="state.patch[key]"
           :label="KNOBS[key].label"
           :default-value="KNOBS[key].default"
-          size="md"
+          size="sm"
           @update:model-value="setParam(key, $event)"
         />
+      </div>
+      <div class="mo-switches">
         <SlideSwitch
           v-for="key in MO_SWITCHES"
           :key="key"
           :model-value="state.patch[key]"
           :positions="SWITCHES[key].positions"
           :label="SWITCHES[key].label"
+          orientation="horizontal"
           @update:model-value="setParam(key, $event)"
         />
       </div>
@@ -130,23 +154,42 @@ const MO_SWITCHES = ['accentSweep', 'sweepSpeed', 'muffler', 'subOsc']
 .mo-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   align-items: start;
   justify-items: center;
   gap: 2px 0;
   padding: 2px 8px 8px;
 }
 
+.mo-switches {
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-start;
+  padding: 0 8px 8px;
+}
+
 .mo-grid :deep(.knob-label),
-.mo-grid :deep(.switch-label) {
+.mo-switches :deep(.switch-label) {
   font-size: 9.5px;
   letter-spacing: 0.04em;
   max-width: 84px;
 }
 
-.mo-grid :deep(.switch) {
-  padding-top: 8px;
-  gap: 3px;
+.mo-switches :deep(.switch) {
+  padding-top: 4px;
+}
+
+.dist-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 44px;
+  padding: 2px 32px 10px;
+}
+
+.bypassed {
+  opacity: 0.55;
 }
 
 /* stack the two sections on narrower screens */

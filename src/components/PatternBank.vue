@@ -5,7 +5,7 @@ import { useEditor } from '../store/editor.js'
 import HwButton from './hw/HwButton.vue'
 
 // Pattern memory like the hardware: GROUP I-IV, SECTION A/B, PATTERN 1-8.
-const { state, selectSlot } = useEditor()
+const { state, selectSlot, setChain, clearChain } = useEditor()
 
 // The slot shown on the buttons = pending slot (if queued) or the current one.
 const target = computed(() => slotParts(state.pendingSlot ?? state.slot))
@@ -14,6 +14,21 @@ const current = computed(() => slotParts(state.slot))
 const isEmpty = (index) => state.bank[index].steps.every((s) => s.time === 'rest')
 
 const go = (group, section, number) => selectSlot(slotIndex(group, section, number))
+
+// Shift-click a pattern number: chain from the current slot to that one.
+const pressNumber = (event, n) => {
+  const index = slotIndex(target.value.group, target.value.section, n)
+  if (event?.shiftKey) setChain(state.slot, index)
+  else selectSlot(index)
+}
+
+const chained = (n) => {
+  const c = state.chain
+  const index = slotIndex(target.value.group, target.value.section, n)
+  return Boolean(c) && index >= c.start && index <= c.end
+}
+
+const chainLabel = computed(() => (state.chain ? `${slotLabel(state.chain.start)} → ${slotLabel(state.chain.end)}` : null))
 
 const numberLed = (n) => {
   const t = target.value
@@ -32,6 +47,11 @@ const pendingLabel = computed(() => (state.pendingSlot !== null ? slotLabel(stat
       <span class="title">PATTERN</span>
       <span class="slot">{{ label }}</span>
       <span v-if="pendingLabel" class="pending">→ {{ pendingLabel }}</span>
+      <span v-if="chainLabel" class="chain" title="These slots play one after another">
+        CHAIN {{ chainLabel }}
+        <button type="button" aria-label="Clear chain" title="Clear chain" @click="clearChain">×</button>
+      </span>
+      <span v-else class="chain-hint">Shift-click a number to chain</span>
     </div>
     <div class="bank-row">
       <div class="group">
@@ -63,11 +83,12 @@ const pendingLabel = computed(() => (state.pendingSlot !== null ? slotLabel(stat
           v-for="n in PATTERNS_PER_SECTION"
           :key="n"
           size="sm"
+          :class="{ chained: chained(n - 1) }"
           :variant="isEmpty(slotIndex(target.group, target.section, n - 1)) ? 'dark' : 'grey'"
           :label="String(n)"
           :led="numberLed(n - 1)"
-          :title="`Pattern ${n}`"
-          @press="go(target.group, target.section, n - 1)"
+          :title="`Pattern ${n} (shift-click: chain)`"
+          @press="pressNumber($event, n - 1)"
         />
       </div>
     </div>
@@ -117,16 +138,57 @@ const pendingLabel = computed(() => (state.pendingSlot !== null ? slotLabel(stat
   animation: blink 0.5s steps(1) infinite;
 }
 
+.chain {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.chain button {
+  padding: 0 3px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.chain-hint {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.chained {
+  position: relative;
+}
+
+.chained::after {
+  content: '';
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  bottom: -5px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
 .bank-row {
   display: flex;
-  gap: 14px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .group {
   display: flex;
-  gap: 6px;
-  padding-right: 14px;
+  gap: 4px;
+  padding-right: 8px;
   border-right: 1px solid var(--print-line);
 }
 

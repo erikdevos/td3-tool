@@ -1,14 +1,18 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { LIBRARY, LIBRARY_STYLES } from '../model/library.js'
 import { MAX_PITCH, MIN_PITCH, pitchOf, slotLabel } from '../model/pattern.js'
 import { useEditor } from '../store/editor.js'
+import { KEYS, read, write } from '../store/storage.js'
 
 const emit = defineEmits(['close'])
 const { state, loadLibraryEntry, play } = useEditor()
 
-const style = ref('All')
-const withSound = ref(true)
+// remember the filter and checkbox between visits
+const saved = read(KEYS.ui)?.library || {}
+const style = ref(saved.style === 'All' || LIBRARY_STYLES.includes(saved.style) ? saved.style : 'All')
+const withSound = ref(saved.withSound !== false)
+watch([style, withSound], () => write(KEYS.ui, { ...(read(KEYS.ui) || {}), library: { style: style.value, withSound: withSound.value } }))
 
 const entries = computed(() => (style.value === 'All' ? LIBRARY : LIBRARY.filter((e) => e.style === style.value)))
 
@@ -121,7 +125,7 @@ const load = (entry, andPlay = false) => {
   justify-content: space-between;
   align-items: flex-start;
   padding-bottom: 10px;
-  border-bottom: 2px solid var(--chassis);
+  border-bottom: 2px solid var(--accent);
 }
 
 h2 {
@@ -131,7 +135,7 @@ h2 {
   font-weight: 800;
   font-size: 24px;
   text-transform: uppercase;
-  color: var(--chassis);
+  color: var(--accent);
 }
 
 .sub {
@@ -181,8 +185,8 @@ h2 {
 }
 
 .chip.on {
-  background: var(--chassis);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .opt {

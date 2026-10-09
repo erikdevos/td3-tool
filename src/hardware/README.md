@@ -1,15 +1,29 @@
-# Hardware bridge (future work)
+# Hardware link (TD-3 / TD-3-MO over USB)
 
-This folder is where communication with a real Behringer TD-3-MO will live.
-Nothing here is wired into the UI yet, except a disabled **Send to TD-3** button in
-`src/components/EditorBar.vue`.
+Everything that talks to a real device lives here (`td3.js`), with the reactive wrapper in
+`src/store/device.js` and the UI in `src/components/DeviceOverlay.vue` (top bar: **TD-3 USB**).
+It uses Web MIDI with SysEx, so it works in Chrome and Edge on desktop, not in Safari.
+
+## What it does
+
+- **Live play.** The editor's sequencer and note previews play the real synth as a MIDI
+  instrument: accent = velocity 127 (normal notes 64), slide = the next note starts 4 ms before
+  the previous one ends, key C = MIDI note 36. Nothing is written to the device. The browser
+  sound can be muted. Stopping sends note-off plus All Notes Off (CC 123).
+- **Identify.** Product name (`F0 00 20 32 00 01 0A 06 F7`) and firmware (`... 08 00 F7`).
+  No reply means wrong port, another device, or a model ID we don't know (see below).
+- **Receive** one slot or all 64 into the editor (undoable with Cmd+Z).
+- **Send** the current pattern to the same slot on the device, in three steps:
+  1. read the slot as it is now and keep it as a backup (aborts if that read fails),
+  2. write the new pattern,
+  3. read it back and compare the notes (the TD-3 sends no acknowledgement for a write).
+  The last 30 backups are kept in localStorage and can be loaded back into the editor.
 
 ## What can be transferred
 
-- **Patterns: yes.** The TD-3 stores sequencer patterns in memory and can exchange them
-  over MIDI SysEx (USB-MIDI or 5-pin DIN).
+- **Patterns: yes**, over MIDI SysEx (USB-MIDI or 5-pin DIN).
 - **Patches (knob settings): no.** The TD-3-MO's synth section is analog with direct
-  potentiometers. Knob positions are not stored or recalled by the device. The patches in
+  potentiometers. Knob positions are not stored, recalled or sent over MIDI. The patches in
   this editor only drive the WebAudio preview and serve as recall notes.
 
 ## File formats vs. what the device receives
@@ -56,16 +70,6 @@ independent implementation, no code copied). Checked so far:
 - A real hardware dump published in the td3-pattern README decodes to the note sequence
   described there, so the pitch encoding and the "pitch pool" model are right.
 
-## Plan
-
-1. `requestMidiAccess()` with `sysex: true` (Chrome/Edge; Firefox needs the site permission
-   add-on flow, Safari has no Web MIDI).
-2. `findTd3Ports()` to pick the device by port name.
-3. Ask the device for its product name / firmware (`F0 00 20 32 00 01 0A 06 F7`) to confirm the
-   model ID, then request a pattern dump (`requestPatternSysex`) and decode it.
-4. Compare the decoded pattern with what the TD-3-MO plays, especially ties.
-5. Back up all 64 patterns, then add "Receive from TD-3" / "Send to TD-3".
-
 ## Still to verify (on a real TD-3-MO)
 
 - **Tie direction.** We follow td3-pattern's observation: a tie bit on step i means the note
@@ -74,11 +78,18 @@ independent implementation, no code copied). Checked so far:
   says A1 = 1, which conflicts.
 - **TD-3-MO model ID.** All sources describe the regular TD-3 (`0x0A`). The MO may report a
   different ID or `.seq` device name. Import accepts any device name starting with "TD-3".
-- Triplet mode is read but not supported by the editor (it plays as straight 16ths).
+- **Triplet timing.** The flag (payload byte 97) round-trips. The editor plays triplet patterns
+  as 16th-note triplets (6 steps per beat); no source documents the TD-3's exact timing.
+- **Accent over MIDI.** The TD-3 treats velocities above a configurable threshold as accent
+  (303patterns.com). We send 127 and 64, which works unless the threshold is set below 64.
+- **Note range over MIDI.** Key C is sent as MIDI note 36. If the device plays an octave off,
+  `BASE_MIDI` in `src/model/pattern.js` is the single place to change it.
 
-Sources to check first: Behringer's official TD-3-MO documentation and the SynthTribe
-app (it reads and writes patterns, so its traffic can be captured with a MIDI monitor),
-plus community reverse-engineering notes of the TD-3 SysEx format. Verify everything
-against a dump from a real unit before writing to the device.
+How to verify with a real unit: connect, check that the product name appears, use
+**Receive** on a few slots you know (including one with ties and one in section B), and compare
+with what the device plays. Only then use **Send**, on a slot you don't mind losing; the backup
+and read-back check protect against surprises. If the TD-3-MO does not answer SysEx at all, its
+model ID probably differs from `0x0A` (`TD3_MODEL_ID` in `src/model/td3format.js`); a MIDI
+monitor capture of SynthTribe talking to the device will show the right value.
 
-A tip for testing: back up all patterns from the device first.
+`tests/hardware.test.js` runs the SysEx client and the note player against a simulated TD-3.

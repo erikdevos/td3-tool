@@ -96,7 +96,7 @@ defineEmits(['press'])
 
 /* highlighted action (e.g. Library): amber print on the black cap */
 .cap--light {
-  color: var(--chassis);
+  color: var(--accent);
 }
 
 .cap--red {

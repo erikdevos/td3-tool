@@ -246,12 +246,12 @@ svg {
 
 .skirt {
   fill: url(#knob-skirt);
-  stroke: #5a3a00;
+  stroke: var(--knob-edge);
   stroke-width: 0.8;
 }
 
 .knurl {
-  stroke: rgba(90, 55, 0, 0.45);
+  stroke: var(--knob-knurl);
   stroke-width: 1.3;
 }
 
@@ -267,7 +267,7 @@ svg {
 }
 
 .pointer {
-  stroke: #e2241a;
+  stroke: var(--knob-pointer);
   stroke-width: 2.2;
   stroke-linecap: round;
 }

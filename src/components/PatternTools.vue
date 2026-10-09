@@ -4,7 +4,7 @@ import HwButton from './hw/HwButton.vue'
 import SevenSeg from './hw/SevenSeg.vue'
 
 // part="length": the LENGTH readout (top row of the sequencer)
-// part="tools":  one compact toolbar line with edit + pattern actions
+// part="tools":  two compact lines (edit + pattern actions) that sit in the sequencer's top row
 defineProps({
   part: { type: String, default: 'tools' }
 })
@@ -14,6 +14,7 @@ const {
   state,
   pattern,
   setLength,
+  toggleTriplet,
   clearPattern,
   randomizePattern,
   copyPattern,
@@ -31,6 +32,15 @@ const {
       <HwButton size="sm" variant="dark" title="Shorter" @press="setLength(pattern.length - 1)">−</HwButton>
       <SevenSeg :value="String(pattern.length).padStart(2, '0')" :digits="2" />
       <HwButton size="sm" variant="dark" title="Longer" @press="setLength(pattern.length + 1)">+</HwButton>
+      <HwButton
+        size="sm"
+        variant="dark"
+        label="Triplet"
+        class="triplet"
+        :led="pattern.triplet"
+        title="Triplet mode: steps are 16th-note triplets"
+        @press="toggleTriplet"
+      />
     </div>
   </div>
 
@@ -86,20 +96,28 @@ const {
   align-items: center;
 }
 
+.triplet {
+  margin-left: 4px;
+}
+
 .toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 22px;
+  display: grid;
+  gap: 6px;
 }
 
 .group {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .group .title {
-  margin-right: 4px;
+  width: 58px;
+  margin-right: 2px;
+  text-align: center;
+}
+
+.group :deep(.hwb--text .cap) {
+  padding: 0 6px;
 }
 </style>
