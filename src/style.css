@@ -1,0 +1,96 @@
+@import '@fontsource/barlow-condensed/500.css';
+@import '@fontsource/barlow-condensed/600.css';
+@import '@fontsource/barlow-condensed/700.css';
+@import '@fontsource/barlow-condensed/800.css';
+@import '@fontsource/barlow-condensed/800-italic.css';
+@import '@fontsource/share-tech-mono/400.css';
+
+/* The page is a hardware emulation with a fixed look; it does not follow the OS theme. */
+:root {
+  /* TD-3-MO yellow: warm amber-yellow matte plastic (sampled from product photos) */
+  --chassis: #f2b20f;
+  --chassis-light: #f7c23a;
+  --chassis-deep: #dc9c05;
+  --ink: #161411; /* panel print on yellow */
+  --ink-soft: rgba(22, 20, 17, 0.6);
+  --ink-line: rgba(22, 20, 17, 0.85);
+  --print: #e6e1d3; /* panel print on the dark section */
+  --print-dim: #8f8a7d;
+  --print-line: rgba(230, 225, 211, 0.14);
+  --focus: #3fa9ff;
+  --led-red: #ff3b22;
+
+  --font-panel: 'Barlow Condensed', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
+  --font-display: 'Share Tech Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* fine plastic grain */
+  --chassis-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.06 0 0 0 0 0 0 0 0 0.09 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+
+  color-scheme: dark;
+  font-family: var(--font-panel);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  background: radial-gradient(ellipse at 50% 0%, #2b2b2e 0%, #141416 55%, #0b0b0c 100%) fixed;
+  color: var(--print);
+  overflow-x: hidden;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+/* Red panel LED, shared by all components */
+.led {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #6a1a12, #2a0805 75%);
+  box-shadow: inset 0 0 1px rgba(0, 0, 0, 0.8), 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.led.on {
+  background: radial-gradient(circle at 40% 35%, #ffd2c4, #ff3b22 45%, #c41a0a 100%);
+  box-shadow: 0 0 6px 1px rgba(255, 59, 34, 0.75), 0 0 14px rgba(255, 59, 34, 0.35);
+}
+
+.led.blink {
+  animation: led-blink 0.5s steps(1) infinite;
+}
+
+@keyframes led-blink {
+  0% {
+    background: radial-gradient(circle at 40% 35%, #ffd2c4, #ff3b22 45%, #c41a0a 100%);
+    box-shadow: 0 0 6px 1px rgba(255, 59, 34, 0.75);
+  }
+  50% {
+    background: radial-gradient(circle at 40% 35%, #6a1a12, #2a0805 75%);
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .led.blink {
+    animation: none;
+    background: radial-gradient(circle at 40% 35%, #ffd2c4, #ff3b22 45%, #c41a0a 100%);
+  }
+}
