@@ -1,18 +1,38 @@
 <script setup>
 import { DIST_ROW, KNOBS, MAIN_ROW, MO_ROW, MO_SWITCHES, SWITCHES } from '../model/patch.js'
+import { computed } from 'vue'
+import { useDevice } from '../store/device.js'
 import { useEditor } from '../store/editor.js'
 import Knob from './hw/Knob.vue'
 import SlideSwitch from './hw/SlideSwitch.vue'
 
 const { state, setParam } = useEditor()
+const { device } = useDevice()
+
+// While a real TD-3 is the sound source (connected + live play), the panel knobs only shape the
+// browser preview. Lock and dim them, except the ones that are sent to the device.
+const hwLive = computed(() => device.status === 'ready' && device.liveOut)
+const linked = computed(() => ({ cutoff: device.linkCutoff, tuning: device.linkTuning }))
+
+const ctl = (key) => {
+  if (!hwLive.value) return {}
+  if (linked.value[key]) return { class: 'hw-linked', title: 'Sent to the TD-3 over MIDI' }
+  return { class: 'hw-off', inert: '', title: 'Set this on the TD-3 itself (the device knobs send no MIDI)' }
+}
 </script>
 
 <template>
   <!-- One row: classic TB-303 / TD-3 controls (1/2) + "Modded Out" (TD-3-MO) or distortion (TD-3) (1/2) -->
-  <section class="synth" aria-label="Synth controls">
+  <section :class="['synth', { 'hw-live': hwLive }]" aria-label="Synth controls">
+    <p v-if="hwLive" class="hw-note">
+      TD-3 live: set the knobs on the device<template v-if="device.linkCutoff || device.linkTuning">
+        · <span class="hw-dot"></span> sent over MIDI</template
+      >
+    </p>
     <div class="main">
       <div class="cell cell--wave">
         <SlideSwitch
+          v-bind="ctl('waveform')"
           :model-value="state.patch.waveform"
           :positions="['SAW', 'SQUARE']"
           label="Waveform"
@@ -23,6 +43,7 @@ const { state, setParam } = useEditor()
         <Knob
           v-for="key in MAIN_ROW"
           :key="key"
+          v-bind="ctl(key)"
           :model-value="state.patch[key]"
           :label="KNOBS[key].label"
           :default-value="KNOBS[key].default"
@@ -33,6 +54,7 @@ const { state, setParam } = useEditor()
       </div>
       <div class="cell cell--volume">
         <Knob
+          v-bind="ctl('volume')"
           :model-value="state.patch.volume"
           label="Volume"
           :default-value="KNOBS.volume.default"
@@ -46,6 +68,7 @@ const { state, setParam } = useEditor()
       <div class="mo-badge" aria-hidden="true">Distortion</div>
       <div class="dist-row">
         <SlideSwitch
+          v-bind="ctl('distOn')"
           :model-value="state.patch.distOn"
           :positions="SWITCHES.distOn.positions"
           label="On / Off"
@@ -54,6 +77,7 @@ const { state, setParam } = useEditor()
         <Knob
           v-for="key in DIST_ROW"
           :key="key"
+          v-bind="ctl(key)"
           :model-value="state.patch[key]"
           :label="KNOBS[key].label"
           :default-value="KNOBS[key].default"
@@ -71,6 +95,7 @@ const { state, setParam } = useEditor()
         <Knob
           v-for="key in MO_ROW"
           :key="key"
+          v-bind="ctl(key)"
           :model-value="state.patch[key]"
           :label="KNOBS[key].label"
           :default-value="KNOBS[key].default"
@@ -82,6 +107,7 @@ const { state, setParam } = useEditor()
         <SlideSwitch
           v-for="key in MO_SWITCHES"
           :key="key"
+          v-bind="ctl(key)"
           :model-value="state.patch[key]"
           :positions="SWITCHES[key].positions"
           :label="SWITCHES[key].label"
@@ -97,6 +123,48 @@ const { state, setParam } = useEditor()
 .synth {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* ---- TD-3 live: locked knobs ---- */
+.synth {
+  position: relative;
+}
+
+.hw-off {
+  opacity: 0.3;
+  filter: grayscale(1);
+  cursor: not-allowed;
+}
+
+.hw-linked {
+  position: relative;
+}
+
+/* small green "MIDI" dot next to linked knobs' labels */
+.hw-linked :deep(.knob-label)::after,
+.hw-dot {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: #3fd14a;
+  box-shadow: 0 0 5px rgba(63, 209, 74, 0.8);
+}
+
+.hw-note {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  pointer-events: none;
 }
 
 /* ---- main 1/2 ---- */

@@ -134,6 +134,17 @@ select {
   box-shadow: 0 0 6px 1px rgba(255, 59, 34, 0.75), 0 0 14px rgba(255, 59, 34, 0.35);
 }
 
+/* status LEDs (connection), not panel LEDs: green = OK, amber = attention */
+.led.ok {
+  background: radial-gradient(circle at 40% 35%, #d8ffd0, #3fd14a 45%, #1b8a25 100%);
+  box-shadow: 0 0 6px 1px rgba(63, 209, 74, 0.7);
+}
+
+.led.warn {
+  background: radial-gradient(circle at 40% 35%, #fff0c4, #ffb020 45%, #b06e00 100%);
+  box-shadow: 0 0 6px 1px rgba(255, 176, 32, 0.6);
+}
+
 .led.blink {
   animation: led-blink 0.5s steps(1) infinite;
 }

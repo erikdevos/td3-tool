@@ -16,6 +16,9 @@ const CMD_PRODUCT_REPLY = 0x07
 const CMD_FIRMWARE = 0x08
 const CMD_FIRMWARE_REPLY = 0x09
 const CMD_PATTERN = 0x78
+const CMD_CONFIG = 0x75
+const CMD_CONFIG_REPLY = 0x76
+const CMD_ACK = 0x01 // 01 00 00 = OK, 01 00 01 = refused
 
 export const webMidiSupported = () => typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator
 
@@ -89,6 +92,23 @@ export const createSysexClient = (input, output, modelId = TD3_MODEL_ID) => {
     return [...reply.subarray(9, reply.length - 1)].join('.')
   }
 
+  /**
+   * Read the device's MIDI configuration (303patterns.com, firmware 1.2.4-1.3.7).
+   * Channels are returned 1-16. Resolves with null fields if the reply is shorter than expected.
+   */
+  const config = async () => {
+    const reply = await request(new Uint8Array([...BEHRINGER, modelId, CMD_CONFIG, 0xf7]), (d) => d[7] === CMD_CONFIG_REPLY)
+    const at = (i) => (i < reply.length - 1 ? reply[i] : null)
+    const ch = (v) => (v === null || v > 15 ? null : v + 1)
+    return {
+      outChannel: ch(at(8)), // the channel the TD-3 sends its notes on
+      inChannel: ch(at(9)), // the channel the TD-3 listens to
+      bendRange: at(11), // pitch bend range in semitones (0-12)
+      accentThreshold: at(17),
+      raw: [...reply]
+    }
+  }
+
   /** Read one pattern slot. Resolves with the full SysEx message (decode with decodePatternSysex). */
   const readPattern = (slot) => {
     const message = requestPatternSysex(slot, modelId)
@@ -100,14 +120,39 @@ export const createSysexClient = (input, output, modelId = TD3_MODEL_ID) => {
     )
   }
 
-  /** Write one pattern slot. The TD-3 sends no documented acknowledgement, so verify by reading back. */
-  const writePattern = async (slot, pattern) => {
-    await queue
-    output.send(encodePatternSysex(pattern, slot, modelId))
-    await new Promise((r) => setTimeout(r, 250)) // give the device time to store it
+  /**
+   * Write one pattern slot and wait for the device's answer: 01 00 00 = stored, 01 00 01 = refused
+   * (bad address). Measured on a TD-3-MO 2.0.1 (also in TD-3-Commander's notes). `marker` is the
+   * byte the device keeps before the payload; pass the value read from the slot.
+   */
+  const writePattern = async (slot, pattern, marker = 0) => {
+    const reply = await request(encodePatternSysex(pattern, slot, modelId, marker), (d) => d[7] === CMD_ACK, 2000)
+    if (reply[9] !== 0) throw new Error(`The device refused the pattern (status ${reply[9]})`)
   }
 
-  return { request, productName, firmware, readPattern, writePattern }
+  return { request, productName, firmware, config, readPattern, writePattern }
+}
+
+/** Short human-readable description of an incoming MIDI message (for the monitor). */
+export const describeMidi = (data) => {
+  const [status, d1, d2] = data
+  const ch = (status & 0x0f) + 1
+  const hex = [...data.slice(0, 12)].map((b) => b.toString(16).padStart(2, '0')).join(' ') + (data.length > 12 ? ' …' : '')
+  switch (status & 0xf0) {
+    case 0x80: return { text: `Note off  ch ${ch}  key ${d1}`, hex }
+    case 0x90: return { text: d2 ? `Note on   ch ${ch}  key ${d1}  vel ${d2}` : `Note off  ch ${ch}  key ${d1}`, hex }
+    case 0xa0: return { text: `Key pressure  ch ${ch}  ${d1} = ${d2}`, hex }
+    case 0xb0: return { text: `Control change  ch ${ch}  CC ${d1} = ${d2}`, hex }
+    case 0xc0: return { text: `Program change  ch ${ch}  ${d1}`, hex }
+    case 0xd0: return { text: `Channel pressure  ch ${ch}  ${d1}`, hex }
+    case 0xe0: return { text: `Pitch bend  ch ${ch}  ${((d2 << 7) | d1) - 8192}`, hex }
+    default: break
+  }
+  if (status === 0xf0) return { text: `SysEx (${data.length} bytes)`, hex }
+  if (status === 0xfa) return { text: 'Start', hex }
+  if (status === 0xfb) return { text: 'Continue', hex }
+  if (status === 0xfc) return { text: 'Stop', hex }
+  return { text: 'System message', hex }
 }
 
 /** Payload bytes of a pattern SysEx message, for comparing what was written with what was read back. */

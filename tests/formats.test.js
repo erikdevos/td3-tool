@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { LIBRARY } from '../src/model/library.js'
 import { decodeMidi, encodeMidi, patternNotes } from '../src/model/midi.js'
-import { noteLabel } from '../src/model/pattern.js'
+import { clonePattern, makePattern, makeStep } from '../src/model/pattern.js'
 import {
   decodePatternSysex,
   decodePayload,
   decodeSeq,
+  encodePayload,
   encodePatternSysex,
   encodeSeq,
   requestPatternSysex
@@ -59,22 +60,53 @@ describe('TD-3 .seq and SysEx', () => {
     ])
   })
 
-  it('decodes the hardware dump published in the td3-pattern README', () => {
-    // payload after "78 03 0f 00 01"
-    const dump = [
-      0x01, 0x0b, 0x01, 0x0b, 0x00, 0x0d, 0x01, 0x09, 0x00, 0x0d, 0x02, 0x0c, 0x02, 0x07, 0x02, 0x07, 0x02, 0x0c, 0x02,
-      0x07, 0x01, 0x0c, 0x02, 0x07, 0x01, 0x0b, 0x02, 0x05, 0x00, 0x0f, 0x02, 0x0c,
-      0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 1, 0, 0, 0, 0x09, 0x0d, 0x09, 0x09, 0, 0, 2, 0
-    ]
-    const { pattern } = decodePayload(new Uint8Array(dump))
-    const text = pattern.steps.map((s) =>
-      s.time === 'note' ? noteLabel(s) + (s.octave > 0 ? '+' : s.octave < 0 ? '-' : '') : s.time === 'tie' ? '~' : '.'
-    )
-    expect(pattern.length).toBe(16)
-    // The README lists the pitch pool D# D# C#(DN) C# C#(DN) G#(UP) D#(UP) D#(UP) G#(UP) ...;
-    // ties consume no pool entry, so the notes appear in that order between the holds.
-    expect(text.join(' ')).toBe('D# D# ~ C#- C# C#- ~ ~ G#+ D#+ ~ ~ D#+ . G#+ ~')
+  // Ground truth from a real TD-3-MO (firmware 2.0.1): slot I-A2 as received over SysEx, and the
+  // notes the device itself played from that slot (recorded from its MIDI out, 6 clocks per step):
+  //   step 0 C3(48) · 1 E3(52) held through 3 · 4 rest · 5 D#3(51) · 6 F#3(54) held through 7 ·
+  //   8 G#2(44) · 9 C1(24) accent, held through 10 · 11-14 silent · 15 G3(55)
+  it('decodes a real TD-3-MO dump exactly as the device plays it', () => {
+    const msg = new Uint8Array([
+      240, 0, 32, 50, 0, 1, 10, 120, 0, 1, 0, 0, 2, 4, 2, 8, 2, 7, 2, 10, 2, 0, 0, 12, 2, 11, 2, 11, 2, 12, 1, 13, 2,
+      13, 2, 13, 1, 0, 2, 5, 2, 10, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 1, 0, 0, 0, 7, 3, 9, 3, 1, 0, 3, 8, 247
+    ])
+    const { pattern, group, slot, marker } = decodePatternSysex(msg)
+    expect([group, slot, marker, pattern.length]).toEqual([0, 1, 0, 16])
+    const played = patternNotes(pattern).map((n) => [n.start, n.end, 36 + n.pitch, n.accent])
+    expect(played).toEqual([
+      [0, 1, 48, false],
+      [1, 4, 52, false],
+      [5, 6, 51, false],
+      [6, 8, 54, false],
+      [8, 9, 44, false],
+      [9, 11, 24, true],
+      [15, 16, 55, false]
+    ])
+    // re-encoding keeps the same music
+    const again = decodePayload(encodePayload(pattern)).pattern
+    expect(patternNotes(again)).toEqual(patternNotes(pattern))
+  })
+
+  it('stores steps beyond the pattern length', () => {
+    const p = clonePattern(LIBRARY[0].pattern)
+    p.length = 8
+    const back = decodePayload(encodePayload(p)).pattern
+    expect(back.length).toBe(8)
+    expect(patternNotes({ ...back, length: 16 })).toEqual(patternNotes({ ...p, length: 16 }))
+  })
+
+  it('writes ties on the continuing step (gate bit 0) and keeps the marker byte', () => {
+    const p = makePattern()
+    p.steps[0] = makeStep({ time: 'note' })
+    p.steps[1] = makeStep({ time: 'tie' })
+    p.steps[2] = makeStep({ time: 'tie' })
+    const bytes = encodePayload(p)
+    const gate = ((bytes[102] & 15) << 4) | (bytes[103] & 15) | ((bytes[104] & 15) << 12) | ((bytes[105] & 15) << 8)
+    const rest = ((bytes[106] & 15) << 4) | (bytes[107] & 15) | ((bytes[108] & 15) << 12) | ((bytes[109] & 15) << 8)
+    expect(gate & 0b111).toBe(0b001) // step 0 starts the note, steps 1-2 are ties
+    expect(rest & 0b1111).toBe(0b1000) // steps 0-2 sound, step 3 rests
+    const msg = encodePatternSysex(p, { group: 1, section: 0, number: 2 }, 0x0a, 1)
+    expect([...msg.subarray(8, 12)]).toEqual([1, 2, 0, 1])
   })
 })

@@ -16,6 +16,15 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
+## Live version (GitHub Pages)
+https://erikdevos.github.io/td3-tool/
+
+Every push to `main` runs `.github/workflows/deploy.yml`: install, `npm test`, `npm run build`, then
+the static `dist/` folder is published to GitHub Pages. No server is needed: the build is plain
+HTML/JS/CSS with relative asset paths (`base: './'` in `vite.config.js`), so it works under any sub
+path. One-time setup in the repository: **Settings → Pages → Source: GitHub Actions**.
+Web MIDI (TD-3 USB) needs HTTPS, which Pages provides.
+
 Tests (Vitest: file formats, MIDI, library, hardware link against a simulated TD-3) and build check:
 ```bash
 npm test
@@ -149,8 +158,8 @@ tests/                        Vitest suites (npm test)
   the synth.
 
 ## Known TODOs
-- Test the USB link on a real TD-3-MO: model ID, tie direction, slot numbering, accent velocity
-  threshold, MIDI note range, triplet timing (see `src/hardware/README.md`).
+- USB link verified on a real TD-3-MO (firmware 2.0.1), see `src/hardware/README.md`. Still open:
+  triplet timing.
 - Compare the panel layout and sound against a real TD-3-MO and retune the MO controls and
   factory patches by ear.
 - Possibly: send a whole chain or bank to the device, MIDI clock out.

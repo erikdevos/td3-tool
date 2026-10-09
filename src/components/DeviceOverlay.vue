@@ -6,7 +6,13 @@ import { useEditor } from '../store/editor.js'
 
 const emit = defineEmits(['close'])
 const { state, pattern, notify, replaceSlots } = useEditor()
-const { device, connect, selectPorts, identify, receivePattern, receiveSlots, sendPattern } = useDevice()
+const { device, connect, selectPorts, identify, readConfig, receivePattern, receiveSlots, sendPattern, sendCC, bendRange } =
+  useDevice()
+
+// CC test tool: send any controller to find out what the device responds to
+const ccNumber = ref(74)
+const ccValue = ref(64)
+const sendTestCC = () => sendCC(ccNumber.value, ccValue.value)
 
 const slot = computed(() => state.slot)
 const label = computed(() => slotLabel(state.slot))
@@ -111,16 +117,28 @@ const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'shor
                 <option v-for="p in device.inputs" :key="p.id" :value="p.id">{{ p.name }}</option>
               </select>
             </label>
-            <label>
-              <span>Channel</span>
+            <label title="The TD-3's MIDI IN channel: the app sends notes on this channel">
+              <span>Send ch (TD-3 in)</span>
               <select v-model.number="device.channel">
                 <option v-for="c in 16" :key="c" :value="c">{{ c }}</option>
               </select>
             </label>
+            <label title="The TD-3's MIDI OUT channel: the channel it sends its own notes on">
+              <span>Receive ch (TD-3 out)</span>
+              <select v-model.number="device.receiveChannel">
+                <option v-for="c in 16" :key="c" :value="c">{{ c }}</option>
+              </select>
+            </label>
+            <p v-if="device.config && device.config.inChannel" class="cfg dim">
+              Read from the device: MIDI in ch {{ device.config.inChannel }}, MIDI out ch {{ device.config.outChannel }}<template
+                v-if="device.config.accentThreshold !== null"
+              >, accent above velocity {{ device.config.accentThreshold }}</template>.
+              <button type="button" class="link" @click="readConfig">Read again</button>
+            </p>
             <div class="status">
-              <span :class="['led', { on: sysexOk }]"></span>
-              <span v-if="sysexOk">{{ device.product }} · firmware {{ device.firmware || '?' }}</span>
-              <span v-else class="dim">No SysEx reply (notes may still work)</span>
+              <span :class="['led', sysexOk ? 'ok' : 'warn']" aria-hidden="true"></span>
+              <span v-if="sysexOk">Connected: {{ device.product }} · firmware {{ device.firmware || '?' }}</span>
+              <span v-else class="dim">No SysEx reply: live play may work, receive/send won't</span>
               <button type="button" class="link" @click="identify">Retry</button>
             </div>
           </div>
@@ -136,6 +154,16 @@ const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'shor
           <label class="check">
             <input v-model="device.muteLocal" type="checkbox" />
             Mute the browser sound while playing the TD-3
+          </label>
+          <label class="check">
+            <input v-model="device.linkCutoff" type="checkbox" :disabled="device.status !== 'ready'" />
+            Link the CUT OFF FREQ knob to the TD-3 (sends CC 74, one way: the device's knobs send nothing back)
+          </label>
+          <label class="check">
+            <input v-model="device.linkTuning" type="checkbox" :disabled="device.status !== 'ready'" />
+            Link the TUNING knob to the TD-3 as pitch bend (device range ±{{ bendRange() }} semitones<template
+              v-if="!device.config?.bendRange"
+            >, assumed</template>; the knob goes to ±12, beyond the range the bend stays at its maximum)
           </label>
           <p class="dim small">
             Leave the TD-3's own sequencer stopped. Pitches are sent with key C = MIDI note C2 (36). If accents don't
@@ -172,6 +200,36 @@ const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'shor
           </p>
           <p v-if="device.busy" class="msg">{{ device.busy }}…</p>
           <p v-if="result" :class="['msg', result.kind]">{{ result.text }}</p>
+        </section>
+
+        <!-- monitor -->
+        <section :class="{ off: device.status !== 'ready' }">
+          <h3>MIDI monitor &amp; CC test</h3>
+          <label class="check">
+            <input v-model="device.monitorOn" type="checkbox" :disabled="device.status !== 'ready'" />
+            Show what the TD-3 sends (notes, controllers, start/stop; clock is hidden)
+          </label>
+          <div class="cc-test">
+            <span class="dim">Send CC</span>
+            <input v-model.number="ccNumber" type="number" min="0" max="127" aria-label="Controller number" />
+            <input
+              v-model.number="ccValue"
+              type="range"
+              min="0"
+              max="127"
+              aria-label="Controller value"
+              :disabled="device.status !== 'ready'"
+              @input="sendTestCC"
+            />
+            <code>{{ ccValue }}</code>
+          </div>
+          <ul v-if="device.monitorOn" class="monitor">
+            <li v-if="!device.monitor.length" class="dim">Nothing received yet. Turn a knob or play a key on the TD-3.</li>
+            <li v-for="m in device.monitor" :key="m.at + m.hex">
+              <span>{{ m.text }}</span>
+              <code>{{ m.hex }}</code>
+            </li>
+          </ul>
         </section>
 
         <!-- backups -->
@@ -291,8 +349,69 @@ section.off {
 
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 80px;
+  grid-template-columns: 1fr 1fr 110px 120px;
   gap: 10px 12px;
+}
+
+.cfg {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+}
+
+.cc-test {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.cc-test input[type='number'] {
+  width: 56px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid #000;
+  border-radius: 3px;
+  background: #0d0b08;
+  color: #ffb020;
+  font-family: var(--font-display);
+}
+
+.cc-test input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.cc-test code {
+  width: 28px;
+  font-family: var(--font-display);
+  color: #ffb020;
+}
+
+.monitor {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 4px;
+  background: #0d0b08;
+  font-family: var(--font-display);
+  font-size: 12px;
+  color: #ffb020;
+}
+
+.monitor li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 1px 0;
+}
+
+.monitor code {
+  color: var(--print-dim);
+  font-family: inherit;
 }
 
 .grid label {

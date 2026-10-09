@@ -127,7 +127,11 @@ const onDown = (event) => {
   }
   if (event.button !== 0) return
 
-  roll.value.setPointerCapture(event.pointerId)
+  try {
+    roll.value.setPointerCapture(event.pointerId)
+  } catch {
+    // pointer already gone: editing still works without capture
+  }
   dragId += 1
   const key = `roll-${dragId}`
 
@@ -198,7 +202,11 @@ const hoverText = computed(() => {
 // ---- keyboard gutter (audition) -------------------------------------------------
 
 const keyDown = (pitch, event) => {
-  event.currentTarget.setPointerCapture?.(event.pointerId)
+  try {
+    event.currentTarget.setPointerCapture(event.pointerId)
+  } catch {
+    // pointer already gone: still preview the note
+  }
   previewPitch(pitch)
 }
 
@@ -241,7 +249,7 @@ const laneState = (i, flag) => {
           @pointerup="previewRelease"
           @pointercancel="previewRelease"
         >
-          <span v-if="r.c">{{ r.name }}</span>
+          <span>{{ r.name }}</span>
         </div>
       </div>
 
@@ -474,8 +482,18 @@ const laneState = (i, flag) => {
   font-family: var(--font-display);
   font-size: 9px;
   line-height: 1;
-  color: #333;
+  color: #6a665c;
   pointer-events: none;
+}
+
+/* every key is labelled; C stands out as the octave anchor */
+.pkey.c span {
+  color: #1a1a1a;
+  font-weight: 700;
+}
+
+.pkey.black span {
+  color: #a9a59a;
 }
 
 .roll {

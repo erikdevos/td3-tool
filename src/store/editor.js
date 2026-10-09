@@ -25,7 +25,7 @@ import { KEYS, downloadBlob, exportFile, loadAll, parseImportFile, write } from 
 
 // Single shared editor state (module singleton). Components import `useEditor()`.
 
-const { playEvents: playOnDevice, panic: devicePanic, device } = useDevice()
+const { playEvents: playOnDevice, panic: devicePanic, syncCutoff, syncTuning, device } = useDevice()
 
 const loaded = loadAll()
 const session = loaded.session
@@ -117,6 +117,21 @@ watch(
     if (typeof document !== 'undefined') document.documentElement.dataset.theme = theme
   },
   { immediate: true }
+)
+
+// CUT OFF FREQ -> TD-3-MO (CC 74) when linked; also push the current value when the link
+// is switched on or the device (re)connects.
+watch(
+  () => [state.patch.cutoff, device.linkCutoff, device.status, device.outputId],
+  () => syncCutoff(state.patch.cutoff)
+)
+
+// TUNING -> pitch bend on the device when linked (re-centred when the link is switched off)
+watch(
+  () => [state.patch.tuning, device.linkTuning, device.status, device.outputId, device.config?.bendRange],
+  ([tuning, linked], old) => {
+    if (linked || (old && old[1])) syncTuning(tuning, linked)
+  }
 )
 
 const setTheme = (theme) => {

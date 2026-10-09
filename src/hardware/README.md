@@ -2,7 +2,11 @@
 
 Everything that talks to a real device lives here (`td3.js`), with the reactive wrapper in
 `src/store/device.js` and the UI in `src/components/DeviceOverlay.vue` (top bar: **TD-3 USB**).
-It uses Web MIDI with SysEx, so it works in Chrome and Edge on desktop, not in Safari.
+It uses Web MIDI with SysEx, so it works in Chrome and Edge on desktop, and in Firefox with a caveat:
+Firefox only scans for MIDI devices at startup and silently denies access when it found none, so
+connect and switch on the TD-3 *before* starting Firefox (quit it fully with Cmd+Q first). Safari has
+no Web MIDI. The TD-3-MO shows up on macOS as USB device "TD-3-MO" (Behringer, vendor 0x1397,
+product 0x1265).
 
 ## What it does
 
@@ -12,6 +16,23 @@ It uses Web MIDI with SysEx, so it works in Chrome and Edge on desktop, not in S
   sound can be muted. Stopping sends note-off plus All Notes Off (CC 123).
 - **Identify.** Product name (`F0 00 20 32 00 01 0A 06 F7`) and firmware (`... 08 00 F7`).
   No reply means wrong port, another device, or a model ID we don't know (see below).
+- **MIDI channels.** The TD-3 has a MIDI IN channel (what it listens to; the app sends notes on it)
+  and a MIDI OUT channel (what it sends its own notes on). After identifying, the app reads both
+  from the device configuration (`F0 00 20 32 00 01 0A 75 F7`, reply `... 76`, byte 8 = out,
+  byte 9 = in, byte 17 = accent velocity threshold) and adopts them. Nothing is written to the
+  device settings.
+- **MIDI monitor** shows what the device sends (notes, CC, start/stop; clock hidden).
+- **Cutoff link (one way).** The official TD-3-MO manual (p. 62, "MIDI Information") lists what the
+  device receives: Note Off `8n`, Note On `9n`, All Notes Off `Bn 7B`, **Filter Cutoff `Bn 4A xx`
+  (CC 74)**, Pitch Bend `En`, and clock / start / continue / stop. With "Link the CUT OFF FREQ knob"
+  on, the editor's cutoff knob sends CC 74 (0..127, throttled to one message per 10 ms, current
+  value sent when the link or connection starts). The device's own knobs send no MIDI, so there is
+  no way back from device to editor.
+- **Tuning link (one way).** With "Link the TUNING knob" on, the editor's tuning knob (±12 semitones
+  in the preview) is sent as pitch bend `En lsb msb`. The device bends by its own configured range
+  (read from the configuration reply, byte 11; 2 semitones assumed if unknown), so beyond that range
+  the bend stays at its maximum. Switching the link off re-centres the bend (8192).
+- **CC test tool** next to the monitor: send any CC number/value to find out what a firmware responds to.
 - **Receive** one slot or all 64 into the editor (undoable with Cmd+Z).
 - **Send** the current pattern to the same slot on the device, in three steps:
   1. read the slot as it is now and keep it as a backup (aborts if that read fails),
@@ -70,26 +91,34 @@ independent implementation, no code copied). Checked so far:
 - A real hardware dump published in the td3-pattern README decodes to the note sequence
   described there, so the pitch encoding and the "pitch pool" model are right.
 
-## Still to verify (on a real TD-3-MO)
+## Verified on a real TD-3-MO (firmware 2.0.1), 2026-10-10
 
-- **Tie direction.** We follow td3-pattern's observation: a tie bit on step i means the note
-  continues into step i+1. Acid-Injector never writes ties, so this has one source only.
-- **Pattern slot numbering** in SysEx: A1–A8 = 0–7, B1–B8 = 8–15 (two sources). 303patterns.com
-  says A1 = 1, which conflicts.
-- **TD-3-MO model ID.** All sources describe the regular TD-3 (`0x0A`). The MO may report a
-  different ID or `.seq` device name. Import accepts any device name starting with "TD-3".
-- **Triplet timing.** The flag (payload byte 97) round-trips. The editor plays triplet patterns
-  as 16th-note triplets (6 steps per beat); no source documents the TD-3's exact timing.
-- **Accent over MIDI.** The TD-3 treats velocities above a configurable threshold as accent
-  (303patterns.com). We send 127 and 64, which works unless the threshold is set below 64.
-- **Note range over MIDI.** Key C is sent as MIDI note 36. If the device plays an octave off,
-  `BASE_MIDI` in `src/model/pattern.js` is the single place to change it.
+Tested with the app's own `td3.js` / `td3format.js` driving the device over USB (CoreMIDI):
 
-How to verify with a real unit: connect, check that the product name appears, use
-**Receive** on a few slots you know (including one with ties and one in section B), and compare
-with what the device plays. Only then use **Send**, on a slot you don't mind losing; the backup
-and read-back check protect against surprises. If the TD-3-MO does not answer SysEx at all, its
-model ID probably differs from `0x0A` (`TD3_MODEL_ID` in `src/model/td3format.js`); a MIDI
-monitor capture of SynthTribe talking to the device will show the right value.
+- **Identity:** product "TD-3", model code "P0DTD", firmware reply `09 00 02 00 01`; model ID `0x0A`.
+- **Config dump** (`75` → `76` + 10 bytes): out ch, in ch, transpose, bend range, key priority,
+  multi-trigger, clock polarity, clock rate, clock source, accent threshold. This unit: out 1, in 2,
+  bend ±2, clock source internal, accent above velocity 95.
+- **Pattern read** (`77 g s` → 123-byte `78 g s` message): all 64 slots in 232 ms; the reply echoes
+  the address, so section B = slots 8–15 is confirmed. A bad address gets `01 00 01`.
+- **Tie semantics, by letting the device play a received slot over USB clock and recording its MIDI
+  out:** per step, rest bit set = rest; gate bit set = new note (takes the next pool entry); gate bit
+  clear = tie, i.e. *this* step continues the previous note (silent after a rest). The earlier
+  implementation put ties one step early; fixed, with the recorded slot as a regression test in
+  `tests/formats.test.js`. Pitch mapping confirmed: key C = MIDI 36.
+- **Pattern write:** ACK `01 00 00` after ~12 ms; read-back byte-identical; the original slot content
+  was restored byte for byte afterwards. The app now waits for this ACK and keeps the marker byte.
+- **Live notes** on the device's MIDI IN channel, accent/slide, CC 74 and pitch bend were sent
+  correctly; the device does not echo received notes, so the sound itself was judged by ear.
+
+Reference that matched these measurements: github.com/mattWoolly/TD-3-Commander, docs/DESIGN.md
+(MIT, measured on the same model and firmware).
+
+## Still open
+
+- **Triplet timing.** The flag round-trips; the editor plays triplet steps as 16th-note triplets.
+- **"Tie-rest" steps** (gate 0 + rest 1) exist in factory patterns; they decode as rests and are
+  written back as plain rests.
+- Stale pool entries / masks beyond the used notes are not preserved on write (they are inaudible).
 
 `tests/hardware.test.js` runs the SysEx client and the note player against a simulated TD-3.

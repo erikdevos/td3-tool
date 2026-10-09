@@ -1,11 +1,16 @@
 // Behringer TD-3 pattern binary format: SynthTribe .seq files and SysEx pattern messages.
 //
 // Both wrap the same 110-byte pattern payload. Layout and semantics were assembled from
-// public reverse-engineering notes (no official spec exists):
-//   - 303patterns.com/td3-midi.html (AudioPump, unofficial MIDI implementation)
+// public reverse-engineering notes (no official spec exists) and then checked on a real
+// TD-3-MO (firmware 2.0.1) by letting it play a received pattern and recording its MIDI out:
+//   - 303patterns.com/td3-midi.html (Brad Isbell, unofficial MIDI implementation)
 //   - github.com/echolevel/Acid-Injector (writes .seq/.syx; source of the .seq header)
-//   - github.com/beholder-d/td3-pattern (README: payload dump + observed tie/rest behaviour)
+//   - github.com/beholder-d/td3-pattern (payload dump)
+//   - github.com/mattWoolly/TD-3-Commander docs/DESIGN.md (MIT; measured on a TD-3-MO 2.0.1)
 // This file is an independent implementation; no code was copied from those projects.
+//
+// SysEx pattern message: F0 00 20 32 00 01 0A 78 <group 0-3> <slot 0-15> <marker hi> <marker lo>
+// + 110-byte payload + F7 (123 bytes). The marker reads 00 on used slots; it is kept as read.
 //
 // Payload (110 bytes). Every value is split in two "nibble bytes": hi 4 bits, lo 4 bits.
 //   0   32  pitch pool, 16 x (hi, lo)   value = 24 + semitones from bottom C, bit 7 = key C'
@@ -13,20 +18,17 @@
 //   64  32  slide pool,  16 x (0, flag)
 //   96   2  triplet (0, flag)
 //   98   2  step count (hi, lo), 1..16
-//   100  2  unknown, 00 00
-//   102  4  tie mask   bit = 1: step plays normally, bit = 0: step is held into the next step
-//   106  4  rest mask  bit = 1: rest
+//   100  2  reserved, 00 00
+//   102  4  gate mask  bit = 1: the step starts a note, bit = 0: the step is a tie
+//   106  4  rest mask  bit = 1: rest (wins over the gate bit)
 //   16-bit masks are stored as nibbles in the order [bits 4-7, 0-3, 12-15, 8-11].
+//
+// Per step: rest bit set -> rest; else gate bit set -> new note; else tie (the step continues
+// the previous note; a tie after a rest is silent). Verified on hardware.
 //
 // Like the original TB-303, pitch / accent / slide are a POOL of notes, not per step:
 // the sequencer takes the next pool entry for every step that starts a new note.
-// A held (tied) step consumes nothing; rests consume nothing.
-//
-// UNVERIFIED on real hardware (check before writing to a device, see src/hardware/README.md):
-//   - tie direction: we follow the behaviour reported by td3-pattern (tie bit on step i =
-//     note continues into step i+1)
-//   - pattern slot numbering in SysEx (A1-A8 = 0-7, B1-B8 = 8-15; Acid-Injector and td3-pattern agree)
-//   - whether the TD-3-MO uses the same model ID (0x0A) and payload as the TD-3
+// Ties and rests consume nothing. Steps beyond the active length are stored too.
 
 import { MAX_STEPS, fromPitch, makePattern, makeStep, pitchOf } from './pattern.js'
 import { patternNotes } from './midi.js'
@@ -48,11 +50,11 @@ const nibblesToMask = (b) => ((b[0] & 0x0f) << 4) | (b[1] & 0x0f) | ((b[2] & 0x0
 
 // ---- payload -----------------------------------------------------------------------
 
-/** Editor pattern -> 110-byte TD-3 payload. */
+/** Editor pattern -> 110-byte TD-3 payload. All 16 steps are stored, also beyond the length. */
 export const encodePayload = (pattern) => {
   const out = new Uint8Array(PAYLOAD_SIZE)
-  const notes = patternNotes(pattern) // note + following ties = one pool entry
-  let tieMask = 0xffff
+  const notes = patternNotes({ ...pattern, length: MAX_STEPS }) // note + following ties = one pool entry
+  let gateMask = 0xffff
   let restMask = 0xffff
 
   for (let k = 0; k < 16; k += 1) {
@@ -68,13 +70,13 @@ export const encodePayload = (pattern) => {
   }
 
   notes.forEach((n) => {
-    for (let i = n.start; i < n.end; i += 1) restMask &= ~(1 << i)
-    for (let i = n.start; i < n.end - 1; i += 1) tieMask &= ~(1 << i) // held into next step
+    for (let i = n.start; i < n.end; i += 1) restMask &= ~(1 << i) // sounding steps
+    for (let i = n.start + 1; i < n.end; i += 1) gateMask &= ~(1 << i) // tie steps
   })
 
   out[97] = pattern.triplet ? 1 : 0
   out.set(nib(pattern.length), 98)
-  out.set(maskToNibbles(tieMask), 102)
+  out.set(maskToNibbles(gateMask), 102)
   out.set(maskToNibbles(restMask), 106)
   return out
 }
@@ -85,32 +87,32 @@ export const decodePayload = (bytes) => {
   const pattern = makePattern()
   const length = unnib(bytes[98], bytes[99])
   pattern.length = Math.min(MAX_STEPS, Math.max(1, length || MAX_STEPS))
-  const tieMask = nibblesToMask(bytes.subarray(102, 106))
+  const gateMask = nibblesToMask(bytes.subarray(102, 106))
   const restMask = nibblesToMask(bytes.subarray(106, 110))
 
   let pool = 0 // next pool entry to consume
-  let current = -1 // pool entry of the sounding note
-  let held = false // previous step is held into this one
+  const starts = [] // [step, pool entry] of every note
   for (let i = 0; i < MAX_STEPS; i += 1) {
     const rest = Boolean(restMask & (1 << i))
-    if (held) {
-      pattern.steps[i] = makeStep({ time: 'tie' })
-    } else if (rest || pool >= 16) {
+    const gate = Boolean(gateMask & (1 << i))
+    if (rest || (gate && pool >= 16)) {
       pattern.steps[i] = makeStep()
-      current = -1
-      held = false
-      continue
+    } else if (!gate) {
+      pattern.steps[i] = makeStep({ time: 'tie' }) // continues the previous note (silent after a rest)
     } else {
       const raw = unnib(bytes[pool * 2], bytes[pool * 2 + 1])
       const pitch = (raw & 0x7f) - PITCH_OFFSET
       const fields = raw & 0x80 && pitch % 12 === 0 ? { note: 12, octave: pitch / 12 - 1 } : fromPitch(pitch)
       pattern.steps[i] = makeStep({ ...fields, accent: bytes[32 + pool * 2 + 1] === 1, time: 'note' })
-      current = pool
+      starts.push([i, pool])
       pool += 1
     }
-    held = !(tieMask & (1 << i))
-    // the slide flag lives on the last step of a (held) note
-    if (!held) pattern.steps[i].slide = bytes[64 + current * 2 + 1] === 1
+  }
+  // the slide flag lives on the last step of a (tied) note
+  for (const [start, k] of starts) {
+    let end = start
+    while (end + 1 < MAX_STEPS && pattern.steps[end + 1].time === 'tie') end += 1
+    pattern.steps[end].slide = bytes[64 + k * 2 + 1] === 1
   }
   pattern.triplet = bytes[97] === 1
   return { pattern, triplet: pattern.triplet }
@@ -165,9 +167,10 @@ export const decodeSeq = (bytes) => {
 /** 0-based hardware slot: group 0-3, section 0 (A) / 1 (B), number 0-7 */
 const slotByte = ({ section, number }) => section * 8 + number
 
-export const encodePatternSysex = (pattern, slot, modelId = TD3_MODEL_ID) =>
+/** `marker`: the byte the device keeps before the payload (00 on used slots); pass the value read. */
+export const encodePatternSysex = (pattern, slot, modelId = TD3_MODEL_ID, marker = 0) =>
   new Uint8Array([
-    ...SYSEX_HEADER, modelId, CMD_PATTERN, slot.group, slotByte(slot), 0x00, 0x00,
+    ...SYSEX_HEADER, modelId, CMD_PATTERN, slot.group, slotByte(slot), ...nib(marker & 0xff),
     ...encodePayload(pattern),
     0xf7
   ])
@@ -180,7 +183,7 @@ export const decodePatternSysex = (bytes) => {
     throw new Error('Not a TD-3 pattern SysEx message')
   }
   const { pattern, triplet } = decodePayload(bytes.subarray(12, 12 + PAYLOAD_SIZE))
-  return { pattern, triplet, group: bytes[8], slot: bytes[9], modelId: bytes[6] }
+  return { pattern, triplet, group: bytes[8], slot: bytes[9], modelId: bytes[6], marker: unnib(bytes[10], bytes[11]) }
 }
 
 // handy for tests / debugging

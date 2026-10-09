@@ -4,6 +4,7 @@ import {
   createNotePlayer,
   createSysexClient,
   listPorts,
+  describeMidi,
   payloadOf,
   requestMidiAccess,
   webMidiSupported
@@ -30,8 +31,14 @@ const device = reactive({
   outputName: saved.outputName || null,
   product: null, // product name reported by the device, null = no SysEx reply
   firmware: null,
-  channel: Number.isInteger(saved.channel) ? saved.channel : 1,
+  channel: Number.isInteger(saved.channel) ? saved.channel : 1, // we send on this = the TD-3's MIDI IN channel
+  receiveChannel: Number.isInteger(saved.receiveChannel) ? saved.receiveChannel : 1, // the TD-3's MIDI OUT channel
+  config: null, // { inChannel, outChannel, accentThreshold } as reported by the device
+  monitor: [], // recent incoming messages, newest first
+  monitorOn: false,
   liveOut: saved.liveOut === true, // play the editor's sequencer on the device
+  linkCutoff: saved.linkCutoff === true, // CUT OFF FREQ knob -> CC 74 on the device (TD-3-MO manual p. 62)
+  linkTuning: saved.linkTuning === true, // TUNING knob -> pitch bend on the device
   autoConnect: saved.autoConnect === true, // reconnect on page load (only if MIDI was already allowed)
   muteLocal: saved.muteLocal === true, // silence the WebAudio preview while playing the device
   busy: null, // text of the running SysEx job
@@ -40,13 +47,16 @@ const device = reactive({
 })
 
 watch(
-  () => [device.inputName, device.outputName, device.channel, device.muteLocal, device.liveOut, device.autoConnect, device.backups],
+  () => [device.inputName, device.outputName, device.channel, device.receiveChannel, device.muteLocal, device.liveOut, device.linkCutoff, device.linkTuning, device.autoConnect, device.backups],
   () =>
     write(KEYS.device, {
       inputName: device.inputName,
       outputName: device.outputName,
       channel: device.channel,
+      receiveChannel: device.receiveChannel,
       muteLocal: device.muteLocal,
+      linkCutoff: device.linkCutoff,
+      linkTuning: device.linkTuning,
       liveOut: device.liveOut,
       autoConnect: device.autoConnect,
       backups: device.backups
@@ -70,12 +80,28 @@ const refreshPorts = () => {
   if (!outputs.some((p) => p.id === device.outputId)) device.outputId = pick(outputs, device.outputName)
 }
 
+// MIDI monitor: everything the TD-3 sends except clock / active sensing / our own SysEx replies
+let listening = null
+const onIncoming = (event) => {
+  const data = event.data
+  if (!device.monitorOn || device.busy || !data.length || data[0] === 0xf8 || data[0] === 0xfe) return
+  device.monitor.unshift({ at: Date.now(), ...describeMidi(data) })
+  device.monitor.splice(40)
+}
+const listen = (input) => {
+  if (listening) listening.removeEventListener('midimessage', onIncoming)
+  listening = input
+  if (input) input.addEventListener('midimessage', onIncoming)
+}
+
 /** Ask who is on the other end. A TD-3 answers with its product name and firmware. */
 const identify = async () => {
   const input = port('inputs', device.inputId)
   const out = port('outputs', device.outputId)
+  listen(input)
   device.product = null
   device.firmware = null
+  device.config = null
   client = input && out ? createSysexClient(input, out) : null
   device.inputName = input?.name ?? null
   device.outputName = out?.name ?? null
@@ -85,7 +111,35 @@ const identify = async () => {
     device.firmware = await client.firmware()
   } catch {
     // no SysEx reply: wrong port, a different device, or a model ID we don't know yet
+    return
   }
+  await readConfig()
+}
+
+/** Read the device's MIDI channels and adopt them, so notes go where the TD-3 listens. */
+const readConfig = async () => {
+  if (!client) return
+  try {
+    const cfg = await client.config()
+    device.config = cfg
+    if (cfg.inChannel) device.channel = cfg.inChannel
+    if (cfg.outChannel) device.receiveChannel = cfg.outChannel
+  } catch {
+    device.config = null // older/newer firmware without this reply: keep the manual setting
+  }
+}
+
+const isFirefox = () => typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent)
+
+// Explain the usual reasons a browser refuses MIDI access.
+const accessError = (error) => {
+  if (error.name !== 'SecurityError' && error.name !== 'NotAllowedError') return error.message
+  if (isFirefox()) {
+    return 'Firefox refused MIDI access. Firefox only looks for MIDI devices when it starts: quit Firefox completely ' +
+      '(Cmd+Q), make sure the TD-3 is connected and switched on, start Firefox again and click Connect. ' +
+      'If it still fails, allow MIDI for this site in the address bar (site permissions), or use Chrome or Edge.'
+  }
+  return 'MIDI access was blocked. Allow MIDI (with SysEx) for this site in the browser\'s site settings and try again.'
 }
 
 const connect = async () => {
@@ -104,7 +158,7 @@ const connect = async () => {
     await identify()
   } catch (error) {
     device.status = 'error'
-    device.error = error.name === 'SecurityError' || error.name === 'NotAllowedError' ? 'MIDI access was blocked' : error.message
+    device.error = accessError(error)
   }
 }
 
@@ -140,6 +194,64 @@ const playEvents = (events) => {
 }
 
 const panic = () => notes.panic()
+
+// ---- controllers --------------------------------------------------------------------
+
+// The TD-3-MO receives Filter Cutoff as CC 74 (0x4A). The device's own knobs send nothing.
+export const CC_CUTOFF = 0x4a
+
+const sendCC = (cc, value) => {
+  const out = output()
+  if (!out) return false
+  out.send([0xb0 | ((device.channel - 1) & 0x0f), cc & 0x7f, Math.min(127, Math.max(0, Math.round(value)))])
+  return true
+}
+
+// Knob drags fire many updates: send at most every 10 ms, always ending on the latest value.
+const throttled = (send) => {
+  let pending = null
+  let timer = null
+  const flush = () => {
+    timer = null
+    if (pending === null) return
+    send(pending)
+    pending = null
+    timer = setTimeout(flush, 10)
+  }
+  return (value) => {
+    pending = value
+    if (!timer) flush()
+  }
+}
+
+const sendCutoff = throttled((value) => sendCC(CC_CUTOFF, value * 127))
+
+/** Mirror the editor's cutoff knob (0..1) to the device when linked. */
+const syncCutoff = (value) => {
+  if (device.linkCutoff && output()) sendCutoff(value)
+}
+
+// Pitch bend: 14-bit, centre 8192. The device bends by its own configured range (semitones).
+const DEFAULT_BEND_RANGE = 2
+const bendRange = () => (device.config?.bendRange > 0 ? device.config.bendRange : DEFAULT_BEND_RANGE)
+
+const sendBend = throttled((semitones) => {
+  const out = output()
+  if (!out) return
+  const amount = Math.min(1, Math.max(-1, semitones / bendRange()))
+  const value = Math.min(16383, Math.max(0, Math.round(8192 + amount * (amount < 0 ? 8192 : 8191))))
+  out.send([0xe0 | ((device.channel - 1) & 0x0f), value & 0x7f, value >> 7])
+})
+
+/**
+ * Mirror the editor's TUNING knob (0..1 = -12..+12 semitones, like the preview) as pitch bend.
+ * Beyond the device's bend range the bend stops at its maximum. Unlinking re-centres the bend.
+ */
+const syncTuning = (value, linked = device.linkTuning) => {
+  if (!output()) return
+  if (linked) sendBend((value - 0.5) * 24)
+  else sendBend(0)
+}
 
 watch(
   () => [device.liveOut, device.channel],
@@ -188,8 +300,8 @@ const sameMusic = (a, b) => a.length === b.length && JSON.stringify(patternNotes
 /**
  * Write a pattern into a device slot, safely:
  *   1. read what is there now and keep it as a backup (abort if that read fails)
- *   2. write the new pattern
- *   3. read it back and compare the bytes
+ *   2. write the new pattern and wait for the device's acknowledgement (01 00 00)
+ *   3. read it back and compare
  * Resolves with { verified, exact, backup }: verified = same notes, exact = identical bytes.
  */
 const sendPattern = (slotIndex, pattern) =>
@@ -201,12 +313,13 @@ const sendPattern = (slotIndex, pattern) =>
       slot: slotIndex,
       at: new Date().toISOString(),
       device: device.product,
-      pattern: decodePatternSysex(before).pattern
+      pattern: decodePatternSysex(before).pattern,
+      raw: [...before] // the exact message, for a byte-exact restore
     }
     device.backups.unshift(backup)
     device.backups.splice(MAX_BACKUPS)
 
-    await client.writePattern(slot, pattern)
+    await client.writePattern(slot, pattern, decodePatternSysex(before).marker)
     const after = await client.readPattern(slot)
     return {
       verified: sameMusic(decodePatternSysex(after).pattern, pattern),
@@ -220,9 +333,14 @@ export const useDevice = () => ({
   connect,
   selectPorts,
   identify,
+  readConfig,
   playEvents,
   liveActive,
   panic,
+  sendCC,
+  syncCutoff,
+  syncTuning,
+  bendRange,
   receivePattern,
   receiveSlots,
   sendPattern

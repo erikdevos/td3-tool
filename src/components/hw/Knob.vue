@@ -78,7 +78,11 @@ const set = (v) => emit('update:modelValue', Math.min(1, Math.max(0, v)))
 const onPointerDown = (event) => {
   if (event.button !== 0) return
   event.preventDefault()
-  event.currentTarget.setPointerCapture(event.pointerId)
+  try {
+    event.currentTarget.setPointerCapture(event.pointerId)
+  } catch {
+    // pointer already gone (e.g. a cancelled touch): dragging still works without capture
+  }
   event.currentTarget.focus({ preventScroll: true })
   dragging.value = true
   startY = event.clientY
@@ -96,7 +100,11 @@ const onPointerMove = (event) => {
 const onPointerUp = (event) => {
   if (!dragging.value) return
   dragging.value = false
-  event.currentTarget.releasePointerCapture?.(event.pointerId)
+  try {
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  } catch {
+    // not captured
+  }
 }
 
 const onWheel = (event) => {

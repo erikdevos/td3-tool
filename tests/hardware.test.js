@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createNotePlayer, createSysexClient, payloadOf } from '../src/hardware/td3.js'
+import { createNotePlayer, createSysexClient, describeMidi, payloadOf } from '../src/hardware/td3.js'
 import { LIBRARY } from '../src/model/library.js'
 import { patternNotes } from '../src/model/midi.js'
 import { decodePatternSysex, encodePatternSysex } from '../src/model/td3format.js'
@@ -23,7 +23,13 @@ const fakeTd3 = ({ answers = true } = {}) => {
       if (!answers || d[0] !== 0xf0) return
       if (d[7] === 0x06) reply([...head, 0x07, 0x54, 0x44, 0x2d, 0x33, 0x00, 0xf7])
       if (d[7] === 0x08) reply([...head, 0x09, 0x00, 0x01, 0x03, 0x07, 0xf7])
-      if (d[7] === 0x78) memory.set(`${d[8]}/${d[9]}`, d.slice(12, 12 + 110))
+      // configuration reply, example from 303patterns.com
+      if (d[7] === 0x75) reply([...head, 0x76, 0x00, 0x08, 0x0c, 0x02, 0x02, 0x00, 0x01, 0x02, 0x03, 0x46, 0xf7])
+      if (d[7] === 0x78) {
+        if (d[8] > 3 || d[9] > 15) return reply([...head, 0x01, 0x00, 0x01, 0xf7]) // refused
+        memory.set(`${d[8]}/${d[9]}`, d.slice(12, 12 + 110))
+        reply([...head, 0x01, 0x00, 0x00, 0xf7]) // stored
+      }
       if (d[7] === 0x77) {
         const payload = memory.get(`${d[8]}/${d[9]}`) || [...encodePatternSysex(makePattern(), { group: 0, section: 0, number: 0 })].slice(12, 122)
         reply([...head, 0x78, d[8], d[9], 0x00, 0x00, ...payload, 0xf7])
@@ -41,6 +47,14 @@ describe('SysEx client', () => {
     expect(await client.firmware()).toBe('1.3.7')
   })
 
+  it('reads the MIDI configuration', async () => {
+    const { input, output } = fakeTd3()
+    const cfg = await createSysexClient(input, output).config()
+    expect(cfg.outChannel).toBe(1)
+    expect(cfg.inChannel).toBe(9)
+    expect(cfg.accentThreshold).toBe(70)
+  })
+
   it('writes a pattern and reads the same notes back', async () => {
     const { input, output } = fakeTd3()
     const client = createSysexClient(input, output)
@@ -52,6 +66,12 @@ describe('SysEx client', () => {
     expect(back[9]).toBe(13)
     expect(JSON.stringify(patternNotes(decodePatternSysex(back).pattern))).toBe(JSON.stringify(patternNotes(pattern)))
     expect(payloadOf(back)).toHaveLength(110)
+  })
+
+  it('reports a refused write', async () => {
+    const { input, output } = fakeTd3()
+    const client = createSysexClient(input, output)
+    await expect(client.writePattern({ group: 7, section: 0, number: 0 }, LIBRARY[0].pattern)).rejects.toThrow('refused')
   })
 
   it('times out when nothing answers', async () => {
@@ -103,5 +123,13 @@ describe('live note player', () => {
     )
     expect(sent.map((m) => m.bytes[0])).toEqual([0x91, 0x81, 0x91])
     expect(sent[1].at).toBeLessThan(sent[2].at)
+  })
+})
+
+describe('MIDI monitor', () => {
+  it('describes common messages', () => {
+    expect(describeMidi([0xb0, 74, 100]).text).toContain('CC 74 = 100')
+    expect(describeMidi([0x91, 36, 127]).text).toContain('ch 2')
+    expect(describeMidi([0xfa]).text).toBe('Start')
   })
 })
