@@ -23,11 +23,13 @@ import { doubleSpeed, fitToScale, halfSpeed, invertPattern, reversePattern, rota
 import { decodeMidi, encodeMidi } from '../model/midi.js'
 import { decodeBankFile, decodeSeq, encodeSeq } from '../model/td3format.js'
 import { useDevice } from './device.js'
+import { useDrums } from './drums.js'
 import { KEYS, downloadBlob, exportFile, loadAll, parseImportFile, write } from './storage.js'
 
 // Single shared editor state (module singleton). Components import `useEditor()`.
 
 const { playEvents: playOnDevice, panic: devicePanic, syncCutoff, syncTuning, liveActive, clock: deviceClock, device } = useDevice()
+const { onSixteenth: drumSixteenth, onStop: drumsStopped, prepare: prepareDrums } = useDrums()
 
 const loaded = loadAll()
 const session = loaded.session
@@ -60,6 +62,8 @@ const state = reactive({
   scale: normalizeScale(session.scale),
   // generator settings (see model/generate.js)
   gen: normalizeGenerator(session.gen),
+  // which panel the body shows: the TD-3 ('synth') or the drum companion ('drums'); both keep running
+  view: session.view === 'drums' ? 'drums' : 'synth',
   playing: false,
   playStep: -1,
   audioReady: false,
@@ -99,6 +103,7 @@ const saveSession = debounce(
       selectedStep: state.selectedStep,
       scale: state.scale,
       gen: state.gen,
+      view: state.view,
       factoryVersion: FACTORY_VERSION
     }),
   300
@@ -107,7 +112,7 @@ const saveSession = debounce(
 watch(() => state.bank, saveBank, { deep: true })
 watch(() => state.presets, savePresets, { deep: true })
 watch(
-  () => [state.patch, state.patchName, state.slot, state.bpm, state.shuffle, state.autoAdvance, state.chain, state.model, state.theme, state.selectedStep, state.scale, state.gen],
+  () => [state.patch, state.patchName, state.slot, state.bpm, state.shuffle, state.autoAdvance, state.chain, state.model, state.theme, state.selectedStep, state.scale, state.gen, state.view],
   saveSession,
   { deep: true }
 )
@@ -144,6 +149,10 @@ watch(
 
 const setTheme = (theme) => {
   if (theme in THEMES) state.theme = theme
+}
+
+const setView = (view) => {
+  state.view = view === 'drums' ? 'drums' : 'synth'
 }
 
 const setModel = (model) => {
@@ -217,6 +226,7 @@ const redo = () => restore(history.redo, history.undo) || notify('NOTHING TO RED
 const ensureAudio = async () => {
   try {
     await resumeAudio()
+    if (!state.audioReady) prepareDrums()
     state.audioReady = true
   } catch (error) {
     console.error(error)
@@ -266,8 +276,13 @@ const sequencer = createSequencer({
     if (!(device.muteLocal && liveActive())) sendEvents(events)
     playOnDevice(events)
   },
-  onStop: devicePanic,
-  onClock: deviceClock
+  onStop: () => {
+    devicePanic()
+    drumsStopped()
+  },
+  onClock: deviceClock,
+  // the drum companion: same tempo, shuffle and start/stop
+  onSixteenth: drumSixteenth
 })
 
 const play = async () => {
@@ -759,6 +774,7 @@ export const useEditor = () => ({
   ensureAudio,
   setModel,
   setTheme,
+  setView,
   // transport
   play,
   stop,

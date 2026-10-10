@@ -1,8 +1,12 @@
+import fxUrl from './fx-strip.worklet.js?url&no-inline' // a real file (small assets get inlined as data: URLs)
 import workletUrl from './td3-voice.worklet.js?url'
+import { buildMixer } from './mixer.js'
 
 // Thin wrapper around the AudioContext + the TD-3 voice worklet.
 // Everything time-critical happens inside the worklet; the main thread only
 // sends parameter updates and timestamped note events.
+// Output: voice -> mixer (audio/mixer.js) -> speakers. The scope taps the voice before the
+// mixer, so it always shows the plain TD-3 emulation.
 
 let ctx = null
 let voice = null
@@ -18,7 +22,7 @@ export const initAudio = () => {
   initPromise = (async () => {
     const Ctor = window.AudioContext || window.webkitAudioContext
     ctx = new Ctor({ latencyHint: 'interactive' })
-    await ctx.audioWorklet.addModule(workletUrl)
+    await Promise.all([ctx.audioWorklet.addModule(workletUrl), ctx.audioWorklet.addModule(fxUrl)])
     voice = new AudioWorkletNode(ctx, 'td3-voice', {
       numberOfInputs: 0,
       numberOfOutputs: 1,
@@ -26,8 +30,8 @@ export const initAudio = () => {
     })
     analyser = ctx.createAnalyser()
     analyser.fftSize = 2048
-    voice.connect(analyser)
-    analyser.connect(ctx.destination)
+    voice.connect(analyser) // scope tap (analysers run without an output connection)
+    buildMixer(ctx, voice)
     if (pendingParams) voice.port.postMessage({ type: 'params', params: pendingParams })
     return ctx
   })()
@@ -44,6 +48,7 @@ export const resumeAudio = async () => {
 }
 
 export const audioTime = () => (ctx ? ctx.currentTime : 0)
+export const audioContext = () => ctx
 export const getAnalyser = () => analyser
 
 export const setParams = (params) => {

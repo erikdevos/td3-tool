@@ -1,12 +1,19 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { defaultMixer } from './model/mixer.js'
 import { MODELS } from './model/patch.js'
 import { BANK_SIZE } from './model/pattern.js'
+import { useDrums } from './store/drums.js'
 import { useEditor } from './store/editor.js'
+import { useMixer } from './store/mixer.js'
 import DeviceOverlay from './components/DeviceOverlay.vue'
+import DrumGrid from './components/DrumGrid.vue'
+import DrumPanel from './components/DrumPanel.vue'
+import DrumTools from './components/DrumTools.vue'
 import EditorBar from './components/EditorBar.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import LibraryOverlay from './components/LibraryOverlay.vue'
+import MixerPanel from './components/MixerPanel.vue'
 import PatternBank from './components/PatternBank.vue'
 import PatternLab from './components/PatternLab.vue'
 import PatternTools from './components/PatternTools.vue'
@@ -18,10 +25,18 @@ import SvgDefs from './components/hw/SvgDefs.vue'
 
 const editor = useEditor()
 const { state } = editor
+const { drums, audible: drumsAudible, undo: drumUndo, redo: drumRedo } = useDrums()
+const { mixer } = useMixer() // loads the saved mixer settings into the audio graph at start
 const showHelp = ref(false)
 const showLibrary = ref(false)
 const showDevice = ref(false)
+const showMixer = ref(false) // not modal: the editor keeps working while it is open
+// MIXER LED: something in the mixer changes the sound (an effect, a mute or a fader off 0 dB)
+const mixerLed = computed(() => JSON.stringify(mixer) !== JSON.stringify(defaultMixer()))
 const model = computed(() => MODELS[state.model])
+const showDrums = computed(() => state.view === 'drums')
+// LED on the DRUMS switch: lit while the drums will play, flashing on the beat while running
+const drumLed = computed(() => drumsAudible() && (!state.playing || drums.playStep % 4 === 0))
 
 // Computer keyboard as a one-octave piano: A W S E D F T G Y H U J K = C .. C'
 const NOTE_KEYS = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12 }
@@ -38,6 +53,7 @@ const onKeyDown = (event) => {
     showHelp.value = false
     showLibrary.value = false
     showDevice.value = false
+    showMixer.value = false
     return
   }
   if (key === '?') {
@@ -45,6 +61,27 @@ const onKeyDown = (event) => {
     return
   }
   if (showHelp.value || showLibrary.value || showDevice.value) return
+
+  if (lower === 'd' && event.shiftKey && !mod && !event.altKey && !event.repeat) {
+    editor.setView(showDrums.value ? 'synth' : 'drums')
+    return
+  }
+  if (lower === 'm' && event.shiftKey && !mod && !event.altKey && !event.repeat) {
+    showMixer.value = !showMixer.value
+    return
+  }
+  // drum view: only transport and the drums' own undo; the TD-3 edit keys stay off
+  if (showDrums.value) {
+    if (key === ' ') {
+      event.preventDefault()
+      if (!event.repeat) editor.togglePlay()
+    } else if (mod && (lower === 'z' || lower === 'y')) {
+      event.preventDefault()
+      const ok = lower === 'y' || event.shiftKey ? drumRedo() : drumUndo()
+      if (!ok) editor.notify(lower === 'y' || event.shiftKey ? 'NOTHING TO REDO' : 'NOTHING TO UNDO')
+    }
+    return
+  }
 
   if (mod) {
     if (lower === 'z') {
@@ -151,6 +188,40 @@ onBeforeUnmount(() => {
               <circle cx="24.5" cy="18.6" r="1.6" class="eye" />
               <path d="M11.5 23.5 q8.5 8.5 17 0" />
             </svg>
+            <!-- panel switch: the TD-3 or the drum companion; both keep running -->
+            <div class="view-switch" role="group" aria-label="Panel (Shift+D)">
+              <button
+                type="button"
+                :class="{ active: !showDrums }"
+                :aria-pressed="!showDrums"
+                title="Show the synth and its sequencer (Shift+D)"
+                @click="editor.setView('synth')"
+              >
+                Synth
+              </button>
+              <button
+                type="button"
+                :class="{ active: showDrums }"
+                :aria-pressed="showDrums"
+                title="Show the drum machine; it plays along in either view (Shift+D)"
+                @click="editor.setView('drums')"
+              >
+                <span :class="['led', { on: drumLed }]" aria-hidden="true"></span>
+                Drums
+              </button>
+            </div>
+            <div class="view-switch">
+              <button
+                type="button"
+                :class="{ active: showMixer }"
+                :aria-pressed="showMixer"
+                title="Mixer: levels, effects, sidechain and the tempo (Shift+M)"
+                @click="showMixer = !showMixer"
+              >
+                <span :class="['led', { on: mixerLed }]" aria-hidden="true"></span>
+                Mixer
+              </button>
+            </div>
           </div>
           <div class="nameplate-right">
             <div class="power">
@@ -160,7 +231,8 @@ onBeforeUnmount(() => {
             <Scope />
           </div>
         </div>
-        <SynthPanel />
+        <DrumPanel v-if="showDrums" />
+        <SynthPanel v-else />
       </div>
 
       <!-- sequencer section (same yellow body, below a groove) -->
@@ -168,18 +240,31 @@ onBeforeUnmount(() => {
         <!-- one row: transport, length, pattern memory, edit/pattern tools -->
         <div class="seq-top">
           <Transport />
-          <PatternTools part="length" />
-          <PatternBank />
-          <PatternTools part="tools" @library="showLibrary = true" />
+          <DrumTools v-if="showDrums" />
+          <template v-else>
+            <PatternTools part="length" />
+            <PatternBank />
+            <PatternTools part="tools" @library="showLibrary = true" />
+          </template>
         </div>
-        <!-- second row: scale lock, transforms, generator -->
-        <PatternLab />
-        <PianoRoll />
-        <p class="hint">
-          Click to add a note · drag the right edge to lengthen it · drag up/down to change pitch · click a note to
-          delete it ·
-          <button type="button" class="hint-link" @click="showHelp = true">Shortcuts (?)</button>
-        </p>
+        <template v-if="showDrums">
+          <DrumGrid />
+          <p class="hint">
+            Click a step to set or clear it · drag to paint · click BD, SD ... to mute a row · the drums follow the
+            TD-3's tempo, shuffle and RUN / STOP ·
+            <button type="button" class="hint-link" @click="showHelp = true">Shortcuts (?)</button>
+          </p>
+        </template>
+        <template v-else>
+          <!-- second row: scale lock, transforms, generator -->
+          <PatternLab />
+          <PianoRoll />
+          <p class="hint">
+            Click to add a note · drag the right edge to lengthen it · drag up/down to change pitch · click a note to
+            delete it ·
+            <button type="button" class="hint-link" @click="showHelp = true">Shortcuts (?)</button>
+          </p>
+        </template>
       </div>
     </main>
 
@@ -190,6 +275,7 @@ onBeforeUnmount(() => {
     <HelpOverlay v-if="showHelp" @close="showHelp = false" />
     <LibraryOverlay v-if="showLibrary" @close="showLibrary = false" />
     <DeviceOverlay v-if="showDevice" @close="showDevice = false" />
+    <MixerPanel v-if="showMixer" @close="showMixer = false" />
   </div>
 </template>
 
@@ -268,6 +354,46 @@ onBeforeUnmount(() => {
 .smiley .eye {
   fill: var(--ink);
   stroke: none;
+}
+
+/* printed two-way switch next to the name: SYNTH | DRUMS */
+.view-switch {
+  align-self: center;
+  display: flex;
+  margin-left: 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.view-switch button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 11px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-family: var(--font-panel);
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.view-switch button + button {
+  border-left: 1.5px solid var(--ink);
+}
+
+.view-switch button.active {
+  background: var(--ink);
+  color: var(--chassis);
+}
+
+.view-switch button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 
 .nameplate-right {

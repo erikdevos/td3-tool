@@ -37,6 +37,8 @@ fills the service worker's file list and version after each build. It is not reg
 src/model/        pure, no DOM, unit-tested
   pattern.js        step/pattern model, bank layout (64 slots), pitch helpers, BASE_MIDI = 36
   scale.js          scales, inScale / snapPitch (scale lock)
+  drums.js          drum machine: voices, kits, grooves, storage format, knob mappings
+  mixer.js          mixer settings + mappings (fader taper with exact unity, send, duck, reverb)
   generate.js       generator + mutator (pass a seeded rng in tests: seededRandom)
   transform.js      note-level transforms; fromNotes() rebuilds steps (accent first, slide last step)
   patch.js          knob/switch definitions, models (td3mo/td3), themes, factory presets
@@ -46,13 +48,22 @@ src/model/        pure, no DOM, unit-tested
 src/audio/
   td3-voice.worklet.js  the synth voice; dependency-free (loaded via audioWorklet.addModule)
   engine.js         AudioContext + worklet + analyser; audioTimeToMs for MIDI timestamps
-  sequencer.js      lookahead scheduler; emits {kind:'on'|'off', time, midi, accent, slide},
-                    and MIDI clock ticks via onClock (straight 24 ppq, independent of shuffle)
+  sequencer.js      lookahead scheduler on a 24 ppq master clock; emits {kind:'on'|'off', time,
+                    midi, accent, slide}, MIDI clock (onClock) and drum 16ths (onSixteenth),
+                    all from the same tick times (straight 24 ppq, independent of shuffle)
+  drumkit.js        drum sounds synthesised in plain JS (pure, runs in Node), no samples
+  drums.js          drum playback: kit AudioBuffers, bus into the mixer's DRUMS channel
+  mixer.js          mixer graph: voice/drums -> fx worklet -> duck -> fader -> master -> output,
+                    post-fader reverb sends, meters; duckAt(time) = sidechain on scheduled kicks
+  fx-strip.worklet.js  drive + compressor, no lookahead; bypassed (bit-exact) at 0
+  reverb.js         reverb impulse response (pure)
 src/hardware/td3.js  Web MIDI: SysEx client (request/response, ACK), live note player; no Vue
 src/store/
   editor.js         single reactive editor state + all actions (undo, transport, chain, files)
   device.js         TD-3 connection state, heartbeat (device.lost), channel adoption,
                     cutoff/tuning links, clock out, safe send, full backup / restore
+  drums.js          drum machine state + own undo; onSixteenth() is the sequencer hook
+  mixer.js          mixer settings (saved; App imports it so they apply without opening the popup)
   storage.js        localStorage keys, normalisation, migrations, JSON import/export
 src/components/     Vue SFCs; hw/ = reusable hardware widgets (Knob, SlideSwitch, HwButton, ...)
 tests/              Vitest: formats, midi chains, library, hardware (simulated TD-3)
@@ -92,6 +103,16 @@ pattern edits go through `edit()` / `replaceSlots()` so undo works.
 - Every setting persists in `localStorage` and survives a reload.
 - The synth emulation is a mirror of the real device: no extra audio features (effects, sound
   extras the hardware lacks). Sound changes only bring it closer to the hardware.
+- The drum machine (`SYNTH | DRUMS` switch) is a separate jam helper the owner asked for, not part
+  of the TD-3 emulation: keep it simple and compact (5 voices, 16 steps, 606/808/909-style kits,
+  grooves). It shares tempo, shuffle and start/stop with the TD-3; both keep running in either view.
+  It has its own audio bus (nothing on it may add latency) and stays out of the scope.
+- The mixer (MIXER popup) sits AFTER the emulation, like an external mixer and effects unit; the
+  owner chose effects on both channels. Rules: every effect is off at 0, the TD-3 channel at its
+  defaults is bit-exact (keep `tests/mixer.test.js` "bit for bit" passing), the scope taps the voice
+  before the mixer, and no node on a dry path may add latency (no DynamicsCompressorNode: it has
+  ~6 ms lookahead; no oversampled WaveShaper). The sidechain is automation at the scheduled kick
+  times, not an envelope follower.
 - Pattern tools (scale lock, generator, transforms) must produce patterns the TD-3 can store.
 
 ## Conventions
@@ -131,7 +152,10 @@ pattern edits go through `edit()` / `replaceSlots()` so undo works.
   To set state first (localStorage, clicks), drive it over the DevTools protocol
   (`--remote-debugging-port`, Node 22's global WebSocket): `Runtime.evaluate`, then
   `Page.captureScreenshot`.
-- Both sequencer rows (`.seq-top` and the PatternLab row) must stay one line at 1280 and 1440.
+- Both sequencer rows (`.seq-top` and the PatternLab row) must stay one line at 1280 and 1440, in
+  both views (synth and drums; `session.view` in `td3mo.session.v2` picks the view on load).
+- `tests/drums.test.js` drives the sequencer with a mocked engine clock (`vi.mock` of engine.js,
+  fake timers): use that to check timing changes without a browser.
 
 ## Open questions (see docs/TD-3-MO.md §7)
 

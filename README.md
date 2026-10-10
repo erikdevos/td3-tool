@@ -78,6 +78,21 @@ npm run build
   range), move accents or slides to the previous / next note, double and half speed. Everything
   stays within what the TD-3 can store and is undoable.
 - Tempo with a 7-segment readout, tap tempo, shuffle.
+- **Drum machine** (the `SYNTH | DRUMS` switch next to the name, or `Shift+D`): a small 16-step
+  drum machine to jam along with, in the same tempo, shuffle and RUN / STOP as the TD-3. Bass drum,
+  snare, closed and open hat, crash; kits in **606**, **808** and **909** style; tune, decay and
+  level per voice; ready-made grooves (kick, kick + hat, kick + 8ths, house, techno, backbeat,
+  electro, break); click a row name to mute it. Both keep running whichever panel you look at; the
+  LED on DRUMS shows they will play. The sounds are synthesised in the browser (no samples) and are
+  a jam helper, not part of the TD-3 emulation. Drums play in the browser only (no MIDI out).
+- **Mixer** (`MIXER` next to the name, or `Shift+M`; a popup you can drag, the editor stays usable):
+  a TD-3 and a DRUMS channel with drive, compressor, reverb send, fader, mute and level meter; DUCK
+  and RELEASE on the TD-3 channel make every kick of the drum machine duck the bass line
+  (sidechain); MASTER has the tempo (the same one as the transport), the reverb size, a fader and a
+  clip LED. The mixer sits after the emulation, like a hardware mixer: every effect is off at 0, and
+  with the TD-3 channel at its defaults the TD-3 sound passes through bit for bit. The scope shows
+  the TD-3 before the mixer. A real TD-3 played over USB is not in the mixer (only its browser
+  preview is).
 - **Sound engine** in an AudioWorklet, built on **Open303** by Robin Schmidt (MIT license,
   notice in the worklet file): the measured TB-303 "TeeBee" filter model, 303 saw and tanh-shaped
   square wavetables, the envelope-to-cutoff mapping measured on a real unit, the accent RC circuit
@@ -127,6 +142,8 @@ src/
     patch.js                  knob/switch definitions, defaults, factory presets
     pattern.js                pattern/step model, bank layout, demo patterns
     scale.js                  scales, scale lock (in scale, snap to scale)
+    drums.js                  drum machine: voices, kits, grooves, storage format, knob mappings
+    mixer.js                  mixer settings, defaults, fader / send / duck / reverb mappings
     generate.js               line generator and mutator (seedable random, Euclidean rhythm)
     transform.js              reverse, invert, rotate accents/slides, double/half speed, fit to scale
     library.js                built-in pattern library (text format, see parsePattern)
@@ -136,11 +153,19 @@ src/
     editor.js                 shared editor state + all actions (edit, undo, transport, chain, presets)
     device.js                 TD-3 connection state: ports, heartbeat, live notes, clock out,
                               receive/send with backups, full backup/restore
+    drums.js                  drum machine state, its own undo, the per-16th hook for the sequencer
+    mixer.js                  mixer settings: saved, pushed to the audio graph
     storage.js                localStorage, v1 migration, JSON import/export
   audio/
     td3-voice.worklet.js      the synth voice (AudioWorkletProcessor, no imports)
     engine.js                 AudioContext + worklet node + analyser
-    sequencer.js              lookahead scheduler, 303 gate/tie/slide logic
+    sequencer.js              lookahead scheduler on a 24 ppq master clock: 303 gate/tie/slide
+                              logic, drum 16ths and MIDI clock from the same ticks
+    drumkit.js                drum sounds synthesised in plain JS (606 / 808 / 909 style), no samples
+    drums.js                  drum playback: kit buffers, hits at exact times, open-hat choke
+    mixer.js                  mixer graph: channels, reverb, master, meters, kick sidechain
+    fx-strip.worklet.js       channel effects: drive and compressor, no lookahead (no latency)
+    reverb.js                 reverb impulse response (pure)
   components/
     EditorBar.vue             patch manager, pattern/bank files, TD-3 USB button, help
     DeviceOverlay.vue         TD-3 connection, live play, clock out, receive/send, full backup, backups
@@ -150,10 +175,14 @@ src/
     PatternTools.vue          length, shift, transpose, copy/paste, clear, undo
     PatternLab.vue            second row: scale lock, transforms, generator (+ settings popover)
     PianoRoll.vue             piano roll + accent/slide lanes
+    DrumPanel.vue             drum view, upper panel: kit, tune / decay / level per voice, volume
+    DrumTools.vue             drum view, top row: drums on/off, grooves, clear, undo
+    DrumGrid.vue              drum view, step grid (paint, mute per row)
+    MixerPanel.vue            mixer popup: channel strips, meters, master with tempo
     HelpOverlay.vue           shortcuts sheet
     LibraryOverlay.vue        pattern library browser
     Scope.vue                 output oscilloscope
-    hw/                       reusable hardware widgets: Knob, SlideSwitch, HwButton, SevenSeg, SvgDefs
+    hw/                       reusable hardware widgets: Knob, Fader, SlideSwitch, HwButton, SevenSeg, SvgDefs
   hardware/
     td3.js                    Web MIDI: SysEx request/response client, live note player
     README.md                 developer notes: layers, write rules, testing
@@ -202,6 +231,9 @@ vite.config.js                base './', plus the small "pwa-precache" build ste
   have not been compared with a real TD-3-MO.
 - Web Audio needs a user gesture before it can start. The first click or key press powers up
   the synth.
+- The drum kits are synthesised after how the analog machines make their sounds (sine kick, tone +
+  noise snare, six square-wave "metal" hats and cymbal) and tuned by ear; they are not samples and
+  not measured against real 606 / 808 / 909 units. 909 hats and crash are samples on the original.
 
 ## Known TODOs
 - USB link verified on a real TD-3-MO (firmware 2.0.1), see [docs/TD-3-MO.md](docs/TD-3-MO.md). Still open:
@@ -215,8 +247,8 @@ vite.config.js                base './', plus the small "pwa-precache" build ste
 `td3mo.bank.v2` (patterns), `td3mo.presets.v2` (patches), `td3mo.session.v2` (current knobs and
 patch name, slot, selected step, tempo, shuffle, chain, model, colour theme, scale, generator
 settings), `td3mo.device.v1` (MIDI ports, channel, live play, mute, clock out, auto-reconnect,
-device backups), `td3mo.ui.v1` (library filter and
-"load sound" option). After a reload the editor comes back exactly as it was; the TD-3 reconnects by
+device backups), `td3mo.drums.v1` (drum kit, steps, voice knobs, volume, on/off; the open panel
+is in the session), `td3mo.mixer.v1` (mixer channels, effects, faders, reverb size), `td3mo.ui.v1` (library filter and "load sound" option). After a reload the editor comes back exactly as it was; the TD-3 reconnects by
 itself when the browser already allowed MIDI access. Data from the first prototype
 (`td3-patches-v1`, `td3-sequences-v1`) is migrated once on first load: old sequences go to
 Group I, Section B.

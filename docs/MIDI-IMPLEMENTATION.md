@@ -66,7 +66,10 @@ Verified by setting the clock source to USB, starting, and restoring it.)
 The editor's clock out sends Start, then the first `F8` on step 1 and 24 per quarter note at the
 editor's tempo, and Stop when the editor stops. The clock is straight: the editor's shuffle and
 triplet steps do not change it (the TD-3 applies its own). Messages carry Web MIDI timestamps
-taken from the audio clock, so the clock lines up with the browser preview.
+taken from the audio clock, so the clock lines up with the browser preview. The editor's
+sequencer runs on one 24 ppq master clock: the `F8` ticks, the TD-3 steps (6 ticks, 4 in triplet
+mode) and the browser drum machine's 16ths all come from the same tick times, so they stay
+together while the tempo changes.
 
 **Timestamp note (browser):** right after an `AudioContext` starts, `getOutputTimestamp()` returns
 `contextTime` 0 for some tens of milliseconds (Chrome: ~50 ms). MIDI timestamps computed in that

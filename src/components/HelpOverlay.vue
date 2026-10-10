@@ -13,8 +13,10 @@ const SHORTCUTS = [
   ['[ ]', 'Previous / next pattern slot'],
   ['L', 'Pattern library'],
   ['R / M', 'New random line / mutate the pattern (generator settings under GENERATE)'],
-  ['⌘/Ctrl + Z', 'Undo (Shift: redo)'],
+  ['⌘/Ctrl + Z', 'Undo (Shift: redo); in the drum view it undoes drum edits'],
   ['⌘/Ctrl + C / V', 'Copy / paste pattern'],
+  ['Shift + D', 'Switch the panel: synth or drums (both keep playing)'],
+  ['Shift + M', 'Open / close the mixer'],
   ['?', 'This help']
 ]
 
@@ -31,6 +33,9 @@ const MOUSE = [
   ['Triplet', 'Steps become 16th-note triplets (6 per beat)'],
   ['SCALE', 'Key and scale are shaded in the roll; with Lock on, notes snap into the scale. Fit moves all notes into it'],
   ['TRANSFORM', 'Reverse, invert, move accents / slides to the previous or next note, double or half speed'],
+  ['SYNTH | DRUMS (by the name)', 'Show the TD-3 or the drum machine. The drums follow tempo, shuffle and RUN / STOP; the LED is lit while they will play'],
+  ['MIXER (by the name)', 'Levels, drive, compressor and reverb for the TD-3 and the drums, kick sidechain (DUCK) on the TD-3, and the tempo. Effects are off at 0; drag the mixer by its title. The LED is lit when it changes the sound'],
+  ['Drum grid', 'Click a step to set or clear it, drag to paint; click BD, SD ... to mute that row. GROOVE loads a ready-made beat'],
   ['TD-3 / TD-3-MO (top left)', 'Switch model: panel, sound and name follow the chosen hardware'],
   ['Colour dots (top left)', 'Body colour: yellow (MO), silver (303) or black (BK)'],
   ['TD-3 USB (top bar)', 'Play the real synth, receive and send patterns over USB']

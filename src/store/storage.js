@@ -12,6 +12,8 @@ export const KEYS = {
   presets: 'td3mo.presets.v2',
   session: 'td3mo.session.v2',
   device: 'td3mo.device.v1',
+  drums: 'td3mo.drums.v1',
+  mixer: 'td3mo.mixer.v1',
   ui: 'td3mo.ui.v1'
 }
 
