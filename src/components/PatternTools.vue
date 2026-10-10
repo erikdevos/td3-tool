@@ -16,7 +16,6 @@ const {
   setLength,
   toggleTriplet,
   clearPattern,
-  randomizePattern,
   copyPattern,
   pastePattern,
   shiftPattern,
@@ -56,7 +55,6 @@ const {
     <div class="group">
       <span class="title">PATTERN</span>
       <HwButton size="text" variant="light" title="Browse built-in acid patterns (L)" @press="emit('library')">Library</HwButton>
-      <HwButton size="text" variant="dark" title="Generate a random acid line" @press="randomizePattern">Random</HwButton>
       <HwButton size="text" variant="dark" title="Copy pattern (⌘C)" @press="copyPattern">Copy</HwButton>
       <HwButton
         size="text"
@@ -112,12 +110,12 @@ const {
 }
 
 .group .title {
-  width: 58px;
+  width: 52px;
   margin-right: 2px;
   text-align: center;
 }
 
 .group :deep(.hwb--text .cap) {
-  padding: 0 6px;
+  padding: 0 5px;
 }
 </style>

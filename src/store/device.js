@@ -11,8 +11,8 @@ import {
   webMidiSupported
 } from '../hardware/td3.js'
 import { patternNotes } from '../model/midi.js'
-import { normalizePattern, slotLabel, slotParts } from '../model/pattern.js'
-import { decodePatternSysex, encodePayload } from '../model/td3format.js'
+import { BANK_SIZE, normalizePattern, slotLabel, slotParts } from '../model/pattern.js'
+import { decodePatternSysex, encodePayload, reframePatternSysex } from '../model/td3format.js'
 import { KEYS, read, write } from './storage.js'
 
 // Reactive state for the connection with a real TD-3 / TD-3-MO (module singleton).
@@ -42,6 +42,7 @@ const device = reactive({
   linkTuning: saved.linkTuning === true, // TUNING knob -> pitch bend on the device
   autoConnect: saved.autoConnect === true, // reconnect on page load (only if MIDI was already allowed)
   muteLocal: saved.muteLocal === true, // silence the WebAudio preview while playing the device
+  clockOut: saved.clockOut === true, // send MIDI clock + start/stop with the editor's transport
   busy: null, // text of the running SysEx job
   lost: false, // the TD-3 stopped answering (unplugged / switched off), see the heartbeat
   // patterns as they were on the device before we overwrote them, newest first
@@ -49,7 +50,7 @@ const device = reactive({
 })
 
 watch(
-  () => [device.inputName, device.outputName, device.channel, device.receiveChannel, device.muteLocal, device.liveOut, device.linkCutoff, device.linkTuning, device.autoConnect, device.backups],
+  () => [device.inputName, device.outputName, device.channel, device.receiveChannel, device.muteLocal, device.liveOut, device.linkCutoff, device.linkTuning, device.autoConnect, device.clockOut, device.backups],
   () =>
     write(KEYS.device, {
       inputName: device.inputName,
@@ -61,6 +62,7 @@ watch(
       linkTuning: device.linkTuning,
       liveOut: device.liveOut,
       autoConnect: device.autoConnect,
+      clockOut: device.clockOut,
       backups: device.backups
     }),
   { deep: true }
@@ -235,6 +237,35 @@ const playEvents = (events) => {
 
 const panic = () => notes.panic()
 
+// ---- MIDI clock out -----------------------------------------------------------------
+// The editor's transport as MIDI clock: Start (FA), 24 clocks per quarter note (F8), Stop (FC).
+// The TD-3 then runs its OWN sequencer in sync, but only if its clock source is set to USB
+// (or MIDI DIN for a DIN interface); see docs/MIDI-IMPLEMENTATION.md section 3.
+
+const clockActive = () => device.clockOut && device.status === 'ready' && !device.lost && Boolean(device.outputId) && Boolean(output())
+let clockRunning = false
+
+const clock = (kind, time) => {
+  const out = output()
+  if (kind === 'stop') {
+    if (clockRunning && out) out.send([0xfc])
+    clockRunning = false
+    return
+  }
+  if (!out || !clockActive()) return
+  if (kind === 'start') clockRunning = true
+  else if (!clockRunning) return // switched on while running: wait for the next start
+  out.send([kind === 'start' ? 0xfa : 0xf8], audioTimeToMs(time))
+}
+
+// switched off while running: stop the device too
+watch(
+  () => device.clockOut,
+  (on) => {
+    if (!on) clock('stop')
+  }
+)
+
 // ---- controllers --------------------------------------------------------------------
 
 // The TD-3-MO receives Filter Cutoff as CC 74 (0x4A). The device's own knobs send nothing.
@@ -368,6 +399,46 @@ const sendPattern = (slotIndex, pattern) =>
     }
   })
 
+// ---- whole device: backup and restore ---------------------------------------------
+
+/** Read all 64 slots as raw pattern messages (I-A1 .. IV-B8), for a backup file. */
+const backupAll = () =>
+  run('Backing up', async () => {
+    requireClient()
+    const messages = []
+    for (let index = 0; index < BANK_SIZE; index += 1) {
+      device.busy = `Backing up ${slotLabel(index)} (${index + 1}/${BANK_SIZE})`
+      messages.push(new Uint8Array(await client.readPattern(slotParts(index))))
+    }
+    return messages
+  })
+
+/**
+ * Write stored pattern messages back to their slots, byte for byte. Same safety as sendPattern:
+ * first ALL target slots are read (abort if any read fails; the caller saves these as a file),
+ * then each slot is written, acknowledged and read back.
+ * entries: [{ index, raw }]. Resolves with { before, written, mismatched }.
+ */
+const restoreAll = (entries) =>
+  run('Restoring', async () => {
+    requireClient()
+    const before = []
+    for (const [n, { index }] of entries.entries()) {
+      device.busy = `Reading ${slotLabel(index)} before restoring (${n + 1}/${entries.length})`
+      before.push(new Uint8Array(await client.readPattern(slotParts(index))))
+    }
+    const mismatched = []
+    for (const [n, { index, raw }] of entries.entries()) {
+      device.busy = `Writing ${slotLabel(index)} (${n + 1}/${entries.length})`
+      const slot = slotParts(index)
+      const message = reframePatternSysex(raw, slot)
+      await client.writeMessage(message)
+      const after = await client.readPattern(slot)
+      if (!sameBytes(payloadOf(after), payloadOf(message))) mismatched.push(index)
+    }
+    return { before, written: entries.length, mismatched }
+  })
+
 export const useDevice = () => ({
   device,
   connect,
@@ -376,6 +447,8 @@ export const useDevice = () => ({
   readConfig,
   playEvents,
   liveActive,
+  clock,
+  clockActive,
   panic,
   sendCC,
   syncCutoff,
@@ -383,5 +456,7 @@ export const useDevice = () => ({
   bendRange,
   receivePattern,
   receiveSlots,
-  sendPattern
+  sendPattern,
+  backupAll,
+  restoreAll
 })

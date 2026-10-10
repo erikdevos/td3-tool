@@ -186,5 +186,111 @@ export const decodePatternSysex = (bytes) => {
   return { pattern, triplet, group: bytes[8], slot: bytes[9], modelId: bytes[6], marker: unnib(bytes[10], bytes[11]) }
 }
 
+// ---- .syx files ------------------------------------------------------------------------------
+// A .syx file is a plain stream of SysEx messages, as saved by SysEx librarians. For the TD-3 it
+// holds one or more pattern messages (the 123-byte 78 messages above). The editor's full device
+// backup is such a file: all 64 pattern messages as read from the device, I-A1 to IV-B8.
+
+/** Split bytes into SysEx messages (F0 .. F7); anything between messages is skipped. */
+export const splitSysex = (bytes) => {
+  const messages = []
+  let start = -1
+  for (let i = 0; i < bytes.length; i += 1) {
+    if (bytes[i] === 0xf0) start = i
+    else if (bytes[i] === 0xf7 && start >= 0) {
+      messages.push(bytes.subarray(start, i + 1))
+      start = -1
+    }
+  }
+  return messages
+}
+
+const isPatternMessage = (m) =>
+  m.length >= 12 + PAYLOAD_SIZE + 1 && SYSEX_HEADER.every((b, i) => m[i] === b) && m[7] === CMD_PATTERN && m[8] < 4 && m[9] < 16
+
+/**
+ * Pattern messages in a .syx file -> [{ index, group, slot, marker, pattern, raw }].
+ * `index` is the editor's bank slot (0-63): group * 16 + slot (A1-A8 = 0-7, B1-B8 = 8-15).
+ */
+export const decodeSyx = (bytes) =>
+  splitSysex(bytes)
+    .filter(isPatternMessage)
+    .map((m) => {
+      const decoded = decodePatternSysex(m)
+      return { ...decoded, index: decoded.group * 16 + decoded.slot, raw: new Uint8Array(m) }
+    })
+
+/** Concatenate SysEx messages into .syx file bytes. */
+export const encodeSyx = (messages) => {
+  const out = new Uint8Array(messages.reduce((n, m) => n + m.length, 0))
+  let pos = 0
+  for (const m of messages) {
+    out.set(m, pos)
+    pos += m.length
+  }
+  return out
+}
+
+/**
+ * A stored pattern message, re-addressed for writing: same marker and payload, our header and
+ * model ID, and the group / slot it should go to.
+ */
+export const reframePatternSysex = (raw, slot, modelId = TD3_MODEL_ID) =>
+  new Uint8Array([...SYSEX_HEADER, modelId, CMD_PATTERN, slot.group, slotByte(slot), ...raw.subarray(10, 12 + PAYLOAD_SIZE), 0xf7])
+
+// ---- SynthTribe .sqs bank files -----------------------------------------------------------
+// SynthTribe's "all patterns" file. Same container as .seq, but with a different magic and one
+// record per pattern (checked against three real TD-3 files of 7966 bytes, and SynthTribe 3.2.4):
+//   magic 87 43 91 02
+//   u32 BE length + UTF-16BE device name ("TD-3"; a TD-3-MO probably writes "TD-3-MO")
+//   u32 BE length + UTF-16BE firmware version ("1.3.7")
+//   records until the end, 124 bytes each:
+//     u32 group (0-3), u32 slot (0-15, A1-A8 = 0-7, B1-B8 = 8-15), u32 length (112),
+//     112 bytes = marker pair + payload, exactly the SysEx message bytes after 78 <g> <s>
+// Records are matched by their group / slot fields, not by position.
+
+const SQS_MAGIC = [0x87, 0x43, 0x91, 0x02]
+const SQS_RECORD_DATA = 2 + PAYLOAD_SIZE
+
+/** .sqs file bytes -> { device, version, entries: [{ index, group, slot, marker, pattern, raw }] } */
+export const decodeSqs = (bytes) => {
+  if (bytes.length < 12 || SQS_MAGIC.some((b, i) => bytes[i] !== b)) throw new Error('Not a SynthTribe .sqs file')
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  let pos = 4
+  const readString = () => {
+    const len = view.getUint32(pos)
+    pos += 4
+    if (len > 64 || pos + len > bytes.length) throw new Error('Corrupt .sqs header')
+    let text = ''
+    for (let i = 0; i + 1 < len; i += 2) text += String.fromCharCode((bytes[pos + i] << 8) | bytes[pos + i + 1])
+    pos += len
+    return text
+  }
+  const device = readString()
+  const version = readString()
+  if (!/^TD-3/i.test(device)) throw new Error(`This .sqs is for a ${device || 'different device'}, not a TD-3`)
+
+  const entries = []
+  while (pos + 12 <= bytes.length) {
+    const group = view.getUint32(pos)
+    const slot = view.getUint32(pos + 4)
+    const len = view.getUint32(pos + 8)
+    pos += 12
+    if (len !== SQS_RECORD_DATA || group > 3 || slot > 15 || pos + len > bytes.length) throw new Error('Corrupt .sqs pattern record')
+    const data = bytes.subarray(pos, pos + len)
+    pos += len
+    // as a SysEx pattern message, so a .sqs can also be restored to the device byte for byte
+    const raw = new Uint8Array([...SYSEX_HEADER, TD3_MODEL_ID, CMD_PATTERN, group, slot, ...data, 0xf7])
+    entries.push({ ...decodePatternSysex(raw), index: group * 16 + slot, raw })
+  }
+  return { device, version, entries }
+}
+
+/** Pattern entries from any bank-style file: .syx (SysEx) or SynthTribe .sqs. */
+export const decodeBankFile = (bytes) => {
+  if (SQS_MAGIC.every((b, i) => bytes[i] === b)) return { kind: 'SQS', entries: decodeSqs(bytes).entries }
+  return { kind: 'SYX', entries: decodeSyx(bytes) }
+}
+
 // handy for tests / debugging
 export const _internal = { maskToNibbles, nibblesToMask, pitchOf }

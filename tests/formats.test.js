@@ -3,7 +3,9 @@ import { LIBRARY } from '../src/model/library.js'
 import { decodeMidi, encodeMidi, patternNotes } from '../src/model/midi.js'
 import { clonePattern, makePattern, makeStep } from '../src/model/pattern.js'
 import {
+  decodeBankFile,
   decodePatternSysex,
+  decodeSqs,
   decodePayload,
   decodeSeq,
   encodePayload,
@@ -108,5 +110,52 @@ describe('TD-3 .seq and SysEx', () => {
     expect(rest & 0b1111).toBe(0b1000) // steps 0-2 sound, step 3 rests
     const msg = encodePatternSysex(p, { group: 1, section: 0, number: 2 }, 0x0a, 1)
     expect([...msg.subarray(8, 12)]).toEqual([1, 2, 0, 1])
+  })
+})
+
+describe('SynthTribe .sqs bank', () => {
+  // Builds a file in the layout of real SynthTribe exports (magic, two UTF-16BE strings, records).
+  const u32 = (n) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]
+  const utf16 = (s) => [...s].flatMap((c) => [0, c.charCodeAt(0)])
+  const sqs = (records, device = 'TD-3', version = '1.3.7') =>
+    new Uint8Array([
+      0x87, 0x43, 0x91, 0x02,
+      ...u32(device.length * 2), ...utf16(device),
+      ...u32(version.length * 2), ...utf16(version),
+      ...records.flatMap(({ group, slot, pattern, marker = 0 }) => [
+        ...u32(group), ...u32(slot), ...u32(112),
+        ...[...encodePatternSysex(pattern, { group, section: slot >> 3, number: slot & 7 }, 0x0a, marker)].slice(10, 122)
+      ])
+    ])
+
+  it('reads every record by its group / slot, including a TD-3-MO header', () => {
+    const records = [
+      { group: 0, slot: 0, pattern: LIBRARY[0].pattern },
+      { group: 3, slot: 15, pattern: LIBRARY[1].pattern, marker: 1 },
+      { group: 1, slot: 9, pattern: LIBRARY[2].pattern }
+    ]
+    const bytes = sqs(records, 'TD-3-MO', '2.0.1')
+    const { device, version, entries } = decodeSqs(bytes)
+    expect([device, version]).toEqual(['TD-3-MO', '2.0.1'])
+    expect(entries.map((e) => e.index)).toEqual([0, 63, 16 + 9])
+    expect(entries[1].marker).toBe(1)
+    records.forEach((r, i) => expect(patternNotes(entries[i].pattern)).toEqual(patternNotes(r.pattern)))
+    // each entry is also a valid pattern message for a restore
+    expect(entries[2].raw.length).toBe(123)
+    expect(decodeBankFile(bytes).kind).toBe('SQS')
+  })
+
+  it('a full TD-3 bank is 7966 bytes', () => {
+    const all = Array.from({ length: 64 }, (_, i) => ({ group: i >> 4, slot: i & 15, pattern: LIBRARY[i % LIBRARY.length].pattern }))
+    const bytes = sqs(all)
+    expect(bytes.length).toBe(7966)
+    expect(decodeSqs(bytes).entries).toHaveLength(64)
+  })
+
+  it('refuses other devices and broken records', () => {
+    expect(() => decodeSqs(sqs([], 'CRAVE'))).toThrow(/not a TD-3/)
+    const bad = sqs([{ group: 0, slot: 0, pattern: LIBRARY[0].pattern }])
+    bad[bad.length - 113] = 0x50 // record length 0x70 -> 0x50... corrupt the length field
+    expect(() => decodeSqs(bad)).toThrow()
   })
 })

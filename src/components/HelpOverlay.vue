@@ -4,7 +4,7 @@ defineEmits(['close'])
 const SHORTCUTS = [
   ['Space', 'Run / stop'],
   ['← →', 'Select previous / next step'],
-  ['↑ ↓', 'Pitch of selected step ±1 semitone (Shift: ±1 octave)'],
+  ['↑ ↓', 'Pitch of selected step ±1 semitone, or ±1 scale step with the scale lock on (Shift: ±1 octave)'],
   ['A W S E D F T G Y H U J K', 'Write note C .. C\' to the selected step, then move on'],
   ['Z / X', 'Selected note an octave down / up'],
   ['C / V', 'Toggle ACCENT / SLIDE'],
@@ -12,6 +12,7 @@ const SHORTCUTS = [
   ['N, Backspace', 'Delete the note on this step (rest)'],
   ['[ ]', 'Previous / next pattern slot'],
   ['L', 'Pattern library'],
+  ['R / M', 'New random line / mutate the pattern (generator settings under GENERATE)'],
   ['⌘/Ctrl + Z', 'Undo (Shift: redo)'],
   ['⌘/Ctrl + C / V', 'Copy / paste pattern'],
   ['?', 'This help']
@@ -28,6 +29,8 @@ const MOUSE = [
   ['Pattern buttons', 'While running, the new pattern starts when the current one ends'],
   ['Shift-click a number', 'Chain from the current slot to that one; the chain plays in a loop'],
   ['Triplet', 'Steps become 16th-note triplets (6 per beat)'],
+  ['SCALE', 'Key and scale are shaded in the roll; with Lock on, notes snap into the scale. Fit moves all notes into it'],
+  ['TRANSFORM', 'Reverse, invert, move accents / slides to the previous or next note, double or half speed'],
   ['TD-3 / TD-3-MO (top left)', 'Switch model: panel, sound and name follow the chosen hardware'],
   ['Colour dots (top left)', 'Body colour: yellow (MO), silver (303) or black (BK)'],
   ['TD-3 USB (top bar)', 'Play the real synth, receive and send patterns over USB']

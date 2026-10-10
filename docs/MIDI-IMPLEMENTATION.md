@@ -63,6 +63,16 @@ The device obeys Start/Continue/Stop **only from the interface its clock source 
 clock source on internal, USB Start does nothing. (Manual lists the messages; behaviour Community,
 Verified by setting the clock source to USB, starting, and restoring it.)
 
+The editor's clock out sends Start, then the first `F8` on step 1 and 24 per quarter note at the
+editor's tempo, and Stop when the editor stops. The clock is straight: the editor's shuffle and
+triplet steps do not change it (the TD-3 applies its own). Messages carry Web MIDI timestamps
+taken from the audio clock, so the clock lines up with the browser preview.
+
+**Timestamp note (browser):** right after an `AudioContext` starts, `getOutputTimestamp()` returns
+`contextTime` 0 for some tens of milliseconds (Chrome: ~50 ms). MIDI timestamps computed in that
+window came out ~45 ms off from later ones, which showed as one long clock gap on the first start.
+The editor waits until `contextTime` is above 0 before it starts the sequencer.
+
 ## 4. System exclusive
 
 ### 4.1 Framing
@@ -187,7 +197,7 @@ All notes off    → B1 7B 00
 
 | File | What |
 | --- | --- |
-| `src/model/td3format.js` | payload, `.seq` and SysEx pattern encode/decode |
+| `src/model/td3format.js` | payload, `.seq`, `.sqs`, `.syx` and SysEx pattern encode/decode |
 | `src/hardware/td3.js` | SysEx request/response client (identify, config, read, write with ACK), live note player, MIDI monitor descriptions |
 | `src/store/device.js` | connection state, channel adoption, cutoff/tuning links, safe send with backups |
 | `tests/formats.test.js` | includes the recorded TD-3-MO slot as a regression test |

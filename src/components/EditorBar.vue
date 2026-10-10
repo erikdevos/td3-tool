@@ -111,7 +111,7 @@ const save = () => savePreset(nameDraft.value)
 
     <div class="files">
       <span class="bar-label">PATTERN</span>
-      <button type="button" title="Load a .mid or SynthTribe .seq file into the current pattern slot" @click="midiInput.click()">
+      <button type="button" title="Load a .mid, SynthTribe .seq / .sqs or .syx file (one pattern: the current slot; a bank: its own slots)" @click="midiInput.click()">
         Import
       </button>
       <button type="button" title="Save the current pattern as a MIDI file for your DAW (accent = velocity, slide = overlap)" @click="exportPatternMidi">
@@ -120,7 +120,7 @@ const save = () => savePreset(nameDraft.value)
       <button type="button" title="Save the current pattern as a SynthTribe .seq file for the TD-3" @click="exportPatternSeq">
         .seq
       </button>
-      <input ref="midiInput" type="file" accept=".mid,.midi,.seq,audio/midi,audio/x-midi" hidden @change="onMidiFile" />
+      <input ref="midiInput" type="file" accept=".mid,.midi,.seq,.sqs,.syx,audio/midi,audio/x-midi" hidden @change="onMidiFile" />
     </div>
 
     <div class="files">

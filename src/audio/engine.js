@@ -75,6 +75,21 @@ export const auditionOff = (delay = 0) => {
 export const audioTimeToMs = (time) => {
   if (!ctx) return performance.now()
   const ts = typeof ctx.getOutputTimestamp === 'function' ? ctx.getOutputTimestamp() : null
-  if (ts && ts.performanceTime) return ts.performanceTime + (time - ts.contextTime) * 1000
-  return performance.now() + (time - ctx.currentTime) * 1000
+  if (ts && ts.contextTime > 0) return ts.performanceTime + (time - ts.contextTime) * 1000
+  // no output timestamp yet: estimate the output latency ourselves
+  return performance.now() + (time - ctx.currentTime + (ctx.outputLatency || 0)) * 1000
+}
+
+/**
+ * Right after the context starts, getOutputTimestamp() reports contextTime 0 (with a stale
+ * performanceTime) for a few tens of milliseconds; measured in Chrome: ~50 ms. MIDI timestamps
+ * computed in that window come out ~45 ms off from the ones after it. Wait (at most 250 ms)
+ * until it reports a real time.
+ */
+export const outputClockReady = async () => {
+  if (!ctx || typeof ctx.getOutputTimestamp !== 'function') return
+  const t0 = performance.now()
+  while (!(ctx.getOutputTimestamp().contextTime > 0) && performance.now() - t0 < 250) {
+    await new Promise((r) => setTimeout(r, 10))
+  }
 }

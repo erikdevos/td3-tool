@@ -106,6 +106,7 @@ export const createSysexClient = (input, output, modelId = TD3_MODEL_ID) => {
       outChannel: ch(at(8)), // the channel the TD-3 sends its notes on
       inChannel: ch(at(9)), // the channel the TD-3 listens to
       bendRange: at(11), // pitch bend range in semitones (0-12)
+      clockSource: at(16), // 0 internal, 1 MIDI DIN, 2 USB, 3 trigger (verified on a TD-3-MO 2.0.1)
       accentThreshold: at(17),
       raw: [...reply]
     }
@@ -127,15 +128,18 @@ export const createSysexClient = (input, output, modelId = TD3_MODEL_ID) => {
    * (bad address). Measured on a TD-3-MO 2.0.1 (also in TD-3-Commander's notes). `marker` is the
    * byte the device keeps before the payload; pass the value read from the slot.
    */
-  const writePattern = async (slot, pattern, marker = 0) => {
-    const reply = await request(encodePatternSysex(pattern, slot, modelId, marker), (d) => d[7] === CMD_ACK, 2000)
+  const writePattern = (slot, pattern, marker = 0) => writeMessage(encodePatternSysex(pattern, slot, modelId, marker))
+
+  /** Write a complete pattern message as it is (e.g. from a backup file) and wait for the ACK. */
+  const writeMessage = async (message) => {
+    const reply = await request(message, (d) => d[7] === CMD_ACK, 2000)
     if (reply[9] !== 0) throw new Error(`The device refused the pattern (status ${reply[9]})`)
   }
 
   /** Is the device still there? A cheap question with a short timeout; never throws. */
   const ping = (timeoutMs = 600) => productName(timeoutMs).then(() => true, () => false)
 
-  return { request, productName, firmware, config, readPattern, writePattern, ping }
+  return { request, productName, firmware, config, readPattern, writePattern, writeMessage, ping }
 }
 
 /** Short human-readable description of an incoming MIDI message (for the monitor). */

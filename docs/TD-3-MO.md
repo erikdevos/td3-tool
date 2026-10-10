@@ -158,8 +158,10 @@ is split into two "nibble bytes" (high 4 bits, low 4 bits), so all bytes stay be
   without transpose = 24 (0x18). Bit 7 is set when the note was entered on the upper C key
   (C'). Decode with `& 0x7F`. Unused entries are padded with 0x18. (Community; the mapping to MIDI
   notes, byte + 12, was Verified.)
-- **Marker byte:** in front of the payload sits one more nibble pair. It reads 00 on used slots
-  (01 was seen on an empty slot, Community). The editor keeps the value it read when writing.
+- **Marker byte:** in front of the payload sits one more nibble pair, `00 00` or `00 01`. Both
+  occur on empty and on used slots (the test unit: 56 × `00`, 8 × `01`; real `.sqs` files show the
+  same mix), so it does not mean "empty"; its meaning is unknown. The editor keeps the value it read
+  when writing. (Verified.)
 
 ### SynthTribe `.seq` file
 
@@ -178,7 +180,31 @@ The header matches what Acid-Injector writes, byte for byte. Files exported by S
 TD-3-MO are reported to differ in the header (see synthtribe2midi issue #1); the editor accepts any
 device name starting with "TD-3". (Community.)
 
-Other community formats exist (`.sqs` banks, `.syx`); the editor does not read them yet.
+### SynthTribe `.sqs` bank file
+
+SynthTribe's "all patterns" file uses the same kind of header with a different magic, followed by
+one record per pattern (checked against three real TD-3 files of 7966 bytes, Community files; the
+layout also follows from SynthTribe 3.2.4's writer):
+
+| Bytes | Content |
+| --- | --- |
+| 4 | magic `87 43 91 02` |
+| 4 + n | length (u32 BE) + UTF-16BE device name, `TD-3` (a TD-3-MO export probably writes `TD-3-MO`) |
+| 4 + n | length (u32 BE) + UTF-16BE firmware version, e.g. `1.3.7` |
+| 124 × 64 | records: u32 group (0–3), u32 slot (0–15), u32 length 112, then the marker pair and the payload: exactly the SysEx message bytes after `78 <g> <s>` |
+
+Records come in slot order (I-A1 … IV-B8) and contain no tracks or device settings. A TD-3 file is
+30 + 64 × 124 = 7966 bytes; with "TD-3-MO" / "2.0.1" in the header it would be 7972. The editor
+reads the string lengths from the file and matches records by their group / slot fields.
+
+### `.syx` files
+
+A TD-3 `.syx` file is a plain series of 123-byte pattern messages (`F0 00 20 32 00 01 0A 78 g s …
+F7`); a full bank is 64 × 123 = 7872 bytes. This is what SysEx librarians record and what the
+editor's full backup writes. SynthTribe does not export TD-3 `.syx`. The editor skips any other
+message in such a file (requests, ACKs). Some tools write `.syx` files in other layouts (e.g.
+synthtribe2midi's 41-byte format); the TD-3 does not accept those and the editor ignores them.
+(Community: TD-3-Commander, td3-control, Acid-Injector; the 123-byte message is Verified.)
 
 ## 6. What the editor does with all this
 
@@ -190,7 +216,9 @@ Other community formats exist (`.sqs` banks, `.syx`); the editor does not read t
 | Channels | read from the device configuration on connect (nothing is written) |
 | Receive | pattern read of one slot or all 64; undoable in the editor |
 | Send | read the slot (backup) → write → wait for ACK → read back and compare; aborts if the backup read fails; the last 30 backups are kept |
-| Files | `.seq` import/export (SynthTribe), `.mid` import/export (DAW) |
+| Full backup | all 64 slots read and saved as one `.syx` file (byte for byte); restore from `.syx` or `.sqs`: first all target slots are read and saved as a second file, then every slot is written, acknowledged and read back |
+| Clock out | the editor's RUN / STOP as MIDI Start, 24 clocks per quarter note, Stop; the device follows with its clock source on USB; the clock source is read and shown |
+| Files | `.seq` import/export (SynthTribe), `.sqs` and `.syx` import (one pattern into the current slot, a bank into its own slots), `.mid` import/export (DAW) |
 
 ## 7. Open questions
 
@@ -213,6 +241,10 @@ Other community formats exist (`.sqs` banks, `.syx`); the editor does not read t
 - beholder-d, *td3-pattern*, https://github.com/beholder-d/td3-pattern.
 - echolevel, *Acid-Injector*, https://github.com/echolevel/Acid-Injector (`.seq` header).
 - james-see, *synthtribe2midi* issue #1 (TD-3-MO `.seq` exports).
+- rOOmUSh, *td3-control*, https://github.com/rOOmUSh/td3-control (GPL-3.0): three real `.sqs` test
+  files, used to check the `.sqs` layout (the files are not part of this repository).
+- SynthTribe 3.2.4 for macOS: its `.sqs` / `.seq` writer was inspected (not run) to confirm the
+  record layout.
 - TD-3-MO-SR user guide (manuals.plus) and the macProVideo TD-3-MO review (waveform OFF).
 - Thomann product page (cutoff controllable via MIDI, MIDI In/Out/Thru).
 

@@ -20,7 +20,7 @@ DeviceOverlay.vue ──► store/device.js ──► hardware/td3.js ──► 
 ```
 
 - `td3.js` has no Vue: `createSysexClient(input, output)` (identify, config, read, write with
-  ACK, one request at a time with timeouts), `createNotePlayer` (sequencer events → timestamped
+  ACK, `writeMessage` for stored messages, `ping`, one request at a time with timeouts), `createNotePlayer` (sequencer events → timestamped
   Note On/Off, slides as overlaps, panic), `describeMidi` (monitor), `listPorts`.
 - `device.js` holds the connection state, adopts the device's MIDI channels, mirrors live notes,
   sends CC 74 / pitch bend for the linked knobs (throttled to 10 ms), keeps backups, and
@@ -39,7 +39,10 @@ DeviceOverlay.vue ──► store/device.js ──► hardware/td3.js ──► 
 3. Read back and compare; report a mismatch.
 4. Keep the marker byte that was read.
 5. Never send `03` (mode setter, includes firmware update entry) or `7D` (factory reset) from
-   the editor. Configuration setters are not used; channels are only read.
+   the editor. Configuration setters are not used; channels and the clock source are only read.
+6. A full restore (`restoreAll`) first reads every slot it will overwrite (the UI saves those as a
+   `.syx` file), then writes each stored message byte for byte (re-addressed with our header) and
+   reads it back.
 
 ## Testing
 

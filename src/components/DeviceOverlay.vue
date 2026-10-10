@@ -1,13 +1,27 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { BANK_SIZE, isEmptyPattern, slotLabel } from '../model/pattern.js'
+import { decodeBankFile, encodeSyx } from '../model/td3format.js'
 import { useDevice } from '../store/device.js'
 import { useEditor } from '../store/editor.js'
+import { downloadBlob } from '../store/storage.js'
 
 const emit = defineEmits(['close'])
 const { state, pattern, notify, replaceSlots } = useEditor()
-const { device, connect, selectPorts, identify, readConfig, receivePattern, receiveSlots, sendPattern, sendCC, bendRange } =
-  useDevice()
+const {
+  device,
+  connect,
+  selectPorts,
+  identify,
+  readConfig,
+  receivePattern,
+  receiveSlots,
+  sendPattern,
+  sendCC,
+  bendRange,
+  backupAll,
+  restoreAll
+} = useDevice()
 
 // CC test tool: send any controller to find out what the device responds to
 const ccNumber = ref(74)
@@ -16,21 +30,29 @@ const sendTestCC = () => sendCC(ccNumber.value, ccValue.value)
 
 const slot = computed(() => state.slot)
 const label = computed(() => slotLabel(state.slot))
+const CLOCK_SOURCES = ['INTERNAL', 'MIDI DIN', 'USB', 'TRIGGER']
+const clockSourceName = computed(() => CLOCK_SOURCES[device.config?.clockSource] ?? null)
 const sysexOk = computed(() => device.status === 'ready' && Boolean(device.product) && !device.lost)
 const result = ref(null) // { kind: 'ok' | 'warn' | 'error', text }
 const confirmSend = ref(false)
 
-const report = (kind, text) => {
-  result.value = { kind, text }
+// scope: which section shows the message ('memory' or 'backup')
+const report = (kind, text, scope = 'memory') => {
+  result.value = { kind, text, scope }
 }
 
-const guard = async (job) => {
+const jobScope = ref(null) // section whose job is running: its progress text shows there
+
+const guard = async (job, scope = 'memory') => {
   result.value = null
+  jobScope.value = scope
   try {
     await job()
   } catch (error) {
     console.error(error)
-    report('error', error.message)
+    report('error', error.message, scope)
+  } finally {
+    jobScope.value = null
   }
 }
 
@@ -71,6 +93,66 @@ const loadBackup = (backup) => {
   state.slot = backup.slot
   notify(`BACKUP LOADED INTO ${slotLabel(backup.slot)}`)
 }
+
+// ---- full backup / restore (.syx) ----
+
+// local date and time for file names: 2026-10-10-2313
+const stamp = () => {
+  const d = new Date()
+  const two = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}`
+}
+const saveSyx = (messages, name) => downloadBlob(new Blob([encodeSyx(messages)], { type: 'application/octet-stream' }), name)
+
+const backupToFile = () =>
+  guard(async () => {
+    const messages = await backupAll()
+    const name = `td3-backup-${stamp()}.syx`
+    saveSyx(messages, name)
+    report('ok', `Saved all ${messages.length} patterns from the device as ${name}.`, 'backup')
+    notify('DEVICE BACKED UP')
+  }, 'backup')
+
+const restoreInput = ref(null)
+const restoreFile = ref(null) // { name, entries }
+
+const pickRestore = async (event) => {
+  const file = event.target.files[0]
+  event.target.value = ''
+  if (!file) return
+  result.value = null
+  try {
+    const { entries } = decodeBankFile(new Uint8Array(await file.arrayBuffer())) // .syx or SynthTribe .sqs
+    if (!entries.length) throw new Error('This file contains no TD-3 patterns')
+    // the same slot twice: the last one wins, like on the device
+    const bySlot = new Map(entries.map((e) => [e.index, e]))
+    restoreFile.value = { name: file.name, entries: [...bySlot.values()].sort((a, b) => a.index - b.index) }
+  } catch (error) {
+    report('error', `${file.name}: ${error.message}`, 'backup')
+  }
+}
+
+const restoreRange = computed(() => {
+  const list = restoreFile.value?.entries || []
+  if (!list.length) return ''
+  return list.length === 1 ? slotLabel(list[0].index) : `${slotLabel(list[0].index)} … ${slotLabel(list[list.length - 1].index)}`
+})
+
+const restore = () =>
+  guard(async () => {
+    const { entries } = restoreFile.value
+    restoreFile.value = null
+    const { before, written, mismatched } = await restoreAll(entries)
+    // what was on the device before, so the restore itself can be undone
+    const name = `td3-before-restore-${stamp()}.syx`
+    saveSyx(before, name)
+    if (mismatched.length) {
+      report('warn', `Wrote ${written} patterns, but ${mismatched.map(slotLabel).join(', ')} read back differently. The previous content is saved as ${name}.`, 'backup')
+    } else {
+      report('ok', `Restored ${written} patterns and read them back: all identical. The previous content is saved as ${name}.`, 'backup')
+      notify('DEVICE RESTORED')
+    }
+  }, 'backup')
 
 const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
 </script>
@@ -178,6 +260,28 @@ const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'shor
           </p>
         </section>
 
+        <!-- clock out -->
+        <section :class="{ off: device.status !== 'ready' }">
+          <h3>MIDI clock out</h3>
+          <label class="check">
+            <input v-model="device.clockOut" type="checkbox" :disabled="device.status !== 'ready'" />
+            Send MIDI clock and start / stop with the editor's RUN / STOP, so the TD-3 runs its own patterns at the
+            editor's tempo
+          </label>
+          <p v-if="device.clockOut && [0, 3].includes(device.config?.clockSource)" class="msg warn">
+            The TD-3's clock source is {{ clockSourceName }}: it only follows this clock with the source set to USB
+            (or MIDI DIN when you connect through a MIDI interface), on the device or in SynthTribe.
+            <button type="button" class="link" @click="readConfig">Read again</button>
+          </p>
+          <p v-if="device.clockOut && device.liveOut" class="msg warn">
+            Live play is on as well: the TD-3 would play its own pattern and the editor's notes at the same time.
+          </p>
+          <p class="dim small">
+            24 clocks per quarter note at the editor's tempo; the editor's shuffle is not part of the clock (the TD-3
+            uses its own). RUN starts the pattern selected on the TD-3.
+          </p>
+        </section>
+
         <!-- pattern memory -->
         <section :class="{ off: !sysexOk }">
           <h3>Pattern memory <span class="slot">{{ label }}</span></h3>
@@ -205,8 +309,38 @@ const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'shor
             Slots match the editor: group I–IV, section A/B, pattern 1–8. Before writing, the current content of that
             slot is read and kept as a backup; after writing it is read back to check.
           </p>
-          <p v-if="device.busy" class="msg">{{ device.busy }}…</p>
-          <p v-if="result" :class="['msg', result.kind]">{{ result.text }}</p>
+          <p v-if="device.busy && jobScope !== 'backup'" class="msg">{{ device.busy }}…</p>
+          <p v-if="result && result.scope === 'memory'" :class="['msg', result.kind]">{{ result.text }}</p>
+        </section>
+
+        <!-- full backup -->
+        <section :class="{ off: !sysexOk }">
+          <h3>Full backup</h3>
+          <div class="row">
+            <button type="button" :disabled="!sysexOk || Boolean(device.busy)" @click="backupToFile">Back up all 64 to a file</button>
+            <span class="spacer"></span>
+            <template v-if="!restoreFile">
+              <button type="button" class="danger" :disabled="!sysexOk || Boolean(device.busy)" @click="restoreInput.click()">
+                Restore from file…
+              </button>
+            </template>
+            <template v-else>
+              <span class="warn-text">
+                Write {{ restoreFile.entries.length }} {{ restoreFile.entries.length === 1 ? 'pattern' : 'patterns' }}
+                ({{ restoreRange }}) from {{ restoreFile.name }} to the TD-3?
+              </span>
+              <button type="button" class="danger" @click="restore">Yes, restore</button>
+              <button type="button" @click="restoreFile = null">Cancel</button>
+            </template>
+            <input ref="restoreInput" type="file" accept=".syx,.sqs,application/octet-stream" hidden @change="pickRestore" />
+          </div>
+          <p class="dim small">
+            Saves every pattern slot exactly as stored on the device, as a standard .syx file (also readable by SysEx
+            librarians and the editor's Import). Restore also takes a SynthTribe .sqs bank. Restoring first reads the slots it will overwrite and saves them as a
+            second file, then writes and reads back every slot.
+          </p>
+          <p v-if="device.busy && jobScope === 'backup'" class="msg">{{ device.busy }}…</p>
+          <p v-if="result && result.scope === 'backup'" :class="['msg', result.kind]">{{ result.text }}</p>
         </section>
 
         <!-- monitor -->

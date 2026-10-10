@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createNotePlayer, createSysexClient, describeMidi, listPorts, payloadOf } from '../src/hardware/td3.js'
 import { LIBRARY } from '../src/model/library.js'
 import { patternNotes } from '../src/model/midi.js'
-import { decodePatternSysex, encodePatternSysex } from '../src/model/td3format.js'
+import { decodePatternSysex, decodeSyx, encodePatternSysex, encodeSyx, reframePatternSysex } from '../src/model/td3format.js'
 import { makePattern, slotParts } from '../src/model/pattern.js'
 
 // A fake TD-3 on a pair of Web MIDI ports, answering like the unofficial docs describe.
@@ -60,6 +60,7 @@ describe('SysEx client', () => {
     expect(cfg.outChannel).toBe(1)
     expect(cfg.inChannel).toBe(9)
     expect(cfg.accentThreshold).toBe(70)
+    expect(cfg.clockSource).toBe(3)
   })
 
   it('writes a pattern and reads the same notes back', async () => {
@@ -151,5 +152,40 @@ describe('port list', () => {
     const { inputs, outputs } = listPorts(access)
     expect(inputs.map((p) => p.name)).toEqual(['IAC Bus 1'])
     expect(outputs.map((p) => p.name)).toEqual(['TD-3-MO', 'IAC Bus 1'])
+  })
+})
+
+describe('full backup (.syx)', () => {
+  it('backs up slots as a .syx file and restores them byte for byte through the client', async () => {
+    const { input, output, memory } = fakeTd3()
+    const client = createSysexClient(input, output)
+    const lib = LIBRARY.slice(0, 3)
+    for (const [i, e] of lib.entries()) await client.writePattern(slotParts(i), e.pattern)
+    const messages = []
+    for (let i = 0; i < 3; i += 1) messages.push(new Uint8Array(await client.readPattern(slotParts(i))))
+    const file = encodeSyx(messages)
+    expect(file.length).toBe(3 * 123)
+
+    memory.clear() // "factory reset"
+    const entries = decodeSyx(file)
+    expect(entries.map((e) => e.index)).toEqual([0, 1, 2])
+    for (const e of entries) await client.writeMessage(reframePatternSysex(e.raw, slotParts(e.index)))
+    for (let i = 0; i < 3; i += 1) {
+      expect([...payloadOf(await client.readPattern(slotParts(i)))]).toEqual([...payloadOf(messages[i])])
+    }
+  })
+
+  it('reads pattern messages from a .syx with other messages and junk in between, re-addressing on write', () => {
+    const pattern = LIBRARY[4].pattern
+    const msg = encodePatternSysex(pattern, { group: 3, section: 1, number: 7 }) // IV-B8
+    const junk = [0x12, 0xf0, 0x00, 0x20, 0x32, 0x00, 0x01, 0x0a, 0x06, 0xf7, 0x99] // product request
+    const entries = decodeSyx(new Uint8Array([...junk, ...msg, 0x00]))
+    expect(entries).toHaveLength(1)
+    expect(entries[0].index).toBe(63)
+    expect(patternNotes(entries[0].pattern)).toEqual(patternNotes(pattern))
+    const moved = reframePatternSysex(entries[0].raw, { group: 1, section: 0, number: 2 }) // II-A3
+    expect([moved[8], moved[9]]).toEqual([1, 2])
+    expect([...payloadOf(moved)]).toEqual([...payloadOf(msg)])
+    expect(moved.length).toBe(123)
   })
 })

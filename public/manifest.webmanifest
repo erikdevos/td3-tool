@@ -1,0 +1,16 @@
+{
+  "name": "TD-3-MO Editor",
+  "short_name": "TD-3 Editor",
+  "description": "Pattern editor, sound preview and USB link for the Behringer TD-3-MO and TD-3.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#141416",
+  "theme_color": "#141416",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

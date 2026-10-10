@@ -1,4 +1,4 @@
-import { audioTime, clearVoice, resumeAudio, sendEvents } from './engine.js'
+import { audioTime, clearVoice, outputClockReady, resumeAudio, sendEvents } from './engine.js'
 import { midiOf, stepBeats } from '../model/pattern.js'
 
 // Lookahead scheduler ("A tale of two clocks"): a coarse JS timer wakes up
@@ -16,11 +16,15 @@ const GATE_LENGTH = 0.5 // 303 gate is roughly half a 16th step
  * @param {(step:number) => void} hooks.onStep  called (in sync with audio) when a step sounds
  * @param {(events:object[]) => void} [hooks.output]  where voice events go (default: the WebAudio voice)
  * @param {() => void} [hooks.onStop]  called after the sequencer stopped (silence external gear here)
+ * @param {(kind:'start'|'tick'|'stop', time:number|null) => void} [hooks.onClock]
+ *        MIDI clock: 'start' just before the first tick, then 24 'tick's per quarter note at the
+ *        current tempo (straight: shuffle and triplet steps do not change the clock), 'stop' at the end
  */
-export const createSequencer = ({ getState, onWrap, onStep, output = sendEvents, onStop = () => {} }) => {
+export const createSequencer = ({ getState, onWrap, onStep, output = sendEvents, onStop = () => {}, onClock = null }) => {
   let timer = null
   let raf = null
   let nextTime = 0
+  let nextClock = 0
   let stepIndex = 0
   let gateOpen = false
   let uiQueue = []
@@ -59,6 +63,12 @@ export const createSequencer = ({ getState, onWrap, onStep, output = sendEvents,
 
   const tick = () => {
     const horizon = audioTime() + LOOKAHEAD
+    if (onClock) {
+      while (nextClock < horizon) {
+        onClock('tick', nextClock)
+        nextClock += 60 / getState().bpm / 24
+      }
+    }
     while (nextTime < horizon) {
       let { pattern } = getState()
       if (stepIndex >= pattern.length) {
@@ -82,10 +92,13 @@ export const createSequencer = ({ getState, onWrap, onStep, output = sendEvents,
   const start = async () => {
     if (timer) return
     await resumeAudio()
+    await outputClockReady() // so MIDI timestamps (notes, clock) are stable from the first step
     stepIndex = 0
     gateOpen = false
     uiQueue = []
     nextTime = audioTime() + 0.05
+    nextClock = nextTime
+    if (onClock) onClock('start', nextTime - 0.001) // Start, then the first clock on step 1
     tick()
     timer = setInterval(tick, TICK_MS)
     raf = requestAnimationFrame(frame)
@@ -99,6 +112,7 @@ export const createSequencer = ({ getState, onWrap, onStep, output = sendEvents,
     uiQueue = []
     gateOpen = false
     clearVoice()
+    if (onClock) onClock('stop', null)
     onStop()
   }
 

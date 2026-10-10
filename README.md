@@ -34,6 +34,13 @@ HTML/JS/CSS with relative asset paths (`base: './'` in `vite.config.js`), so it 
 path. One-time setup in the repository: **Settings → Pages → Source: GitHub Actions**.
 Web MIDI (TD-3 USB) needs HTTPS, which Pages provides.
 
+**Install as an app (PWA):** in Chrome or Edge, use the install icon in the address bar. The editor
+then opens in its own window and works offline: `public/sw.js` (a service worker) caches every
+file of the build on the first visit. The build step in `vite.config.js` writes the file list and a
+build version into it; a new deploy is picked up on the next visit with a connection. The service
+worker is only registered in the build, not in `npm run dev`. To test it locally:
+`npm run build && npm run preview`.
+
 Tests (Vitest: file formats, MIDI, library, hardware link against a simulated TD-3) and build check:
 ```bash
 npm test
@@ -59,7 +66,17 @@ npm run build
 - **Pattern memory** in the hardware layout: Group I–IV × Section A/B × Pattern 1–8 (64 slots).
   While playing, a newly selected pattern starts when the current one ends, like on the device.
   Shift-click a pattern number to **chain** slots: the range plays one after another in a loop.
-- Pattern length 1–16, **triplet mode** (16th-note triplets), shift, transpose, copy/paste, random acid line, clear, and undo/redo.
+- Pattern length 1–16, **triplet mode** (16th-note triplets), shift, transpose, copy/paste, clear, and undo/redo.
+- **Scale lock** (SCALE row): pick a key and scale (minor, phrygian, dorian, harmonic minor, minor
+  pentatonic, blues, major, mixolydian). The roll shades the scale and marks the root; with **Lock**
+  on, new and dragged notes snap into it and ↑/↓ move by scale step. **Fit** moves all notes into
+  the scale. Transposing moves the key along.
+- **Generator** (GENERATE row, keys `R` / `M`): **New** makes a fresh line in the key and scale,
+  **Mutate** changes a few notes, accents, slides and lengths. Settings: note density, ties, accent
+  and slide chance, rhythm (random or evenly spread, Euclidean) and range (1–3 octaves).
+- **Transforms** (TRANSFORM row): reverse (slides follow the notes), invert (within the melody's own
+  range), move accents or slides to the previous / next note, double and half speed. Everything
+  stays within what the TD-3 can store and is undoable.
 - Tempo with a 7-segment readout, tap tempo, shuffle.
 - **Sound engine** in an AudioWorklet, built on **Open303** by Robin Schmidt (MIT license,
   notice in the worklet file): the measured TB-303 "TeeBee" filter model, 303 saw and tanh-shaped
@@ -79,9 +96,10 @@ npm run build
   into the current slot (undoable). These are not transcriptions of existing tracks.
 - 19 factory patches (knob presets). New factory presets are added for existing users without
   overwriting their own patches (`FACTORY_VERSION` in `patch.js`). Save, delete and an "edited" indicator.
-- **Pattern files**: `Import` accepts `.mid` and SynthTribe `.seq` (detected by content). Export as
-  `.mid` (for DAWs) or `.seq` (for SynthTribe / the TD-3). The `.seq` and SysEx format is in
-  `src/model/td3format.js`; the format is documented in [docs/TD-3-MO.md](docs/TD-3-MO.md).
+- **Pattern files**: `Import` accepts `.mid`, SynthTribe `.seq` and `.sqs` (bank) and `.syx`
+  (detected by content). A single pattern goes into the current slot, a bank into the slots it was
+  saved from (one undo step). Export as `.mid` (for DAWs) or `.seq` (for SynthTribe / the TD-3). The
+  formats are in `src/model/td3format.js` and documented in [docs/TD-3-MO.md](docs/TD-3-MO.md).
 - **MIDI mapping**: Accent = velocity (127 out, >= 100 counts as accent in), slide = overlapping notes,
   ties = longer notes. A file longer than one bar fills the following slots (up to 16) and becomes a
   chain; with a chain selected, `.mid` export writes the whole chain. Import keeps one note per step
@@ -89,7 +107,12 @@ npm run build
   from the file if present.
 - **TD-3 over USB** (`TD-3 USB` in the top bar, Chrome/Edge): play the sequencer on the real synth
   (accent = velocity, slide = overlapping notes), receive one slot or the whole bank, and send the
-  current pattern to its slot with an automatic backup and a read-back check. Details and open
+  current pattern to its slot with an automatic backup and a read-back check. **Full backup**: all 64
+  slots to one `.syx` file, and restore from `.syx` or `.sqs` (the slots it overwrites are saved to a
+  second file first, every slot is read back). **MIDI clock out**: RUN / STOP in the editor starts and
+  stops the TD-3's own sequencer at the editor's tempo (TD-3 clock source: USB). The app notices
+  when the TD-3 is unplugged (also in Firefox, by asking it for its name every few seconds) and
+  unlocks the panel; **Unlock** above the panel does that by hand. Details and open
   questions: [docs/TD-3-MO.md](docs/TD-3-MO.md) and [docs/MIDI-IMPLEMENTATION.md](docs/MIDI-IMPLEMENTATION.md).
 - Export and import of the whole bank (patterns + patches) as JSON. Everything also autosaves
   to localStorage.
@@ -102,13 +125,17 @@ src/
   style.css                   design tokens (colors, fonts), LED style
   model/
     patch.js                  knob/switch definitions, defaults, factory presets
-    pattern.js                pattern/step model, bank layout, demo + random patterns
+    pattern.js                pattern/step model, bank layout, demo patterns
+    scale.js                  scales, scale lock (in scale, snap to scale)
+    generate.js               line generator and mutator (seedable random, Euclidean rhythm)
+    transform.js              reverse, invert, rotate accents/slides, double/half speed, fit to scale
     library.js                built-in pattern library (text format, see parsePattern)
     midi.js                   Standard MIDI File encode/decode (pure, testable in Node)
-    td3format.js              TD-3 pattern payload: .seq files + SysEx messages
+    td3format.js              TD-3 pattern payload: .seq, .sqs and .syx files + SysEx messages
   store/
     editor.js                 shared editor state + all actions (edit, undo, transport, chain, presets)
-    device.js                 TD-3 connection state: ports, live notes, receive/send with backups
+    device.js                 TD-3 connection state: ports, heartbeat, live notes, clock out,
+                              receive/send with backups, full backup/restore
     storage.js                localStorage, v1 migration, JSON import/export
   audio/
     td3-voice.worklet.js      the synth voice (AudioWorkletProcessor, no imports)
@@ -116,11 +143,12 @@ src/
     sequencer.js              lookahead scheduler, 303 gate/tie/slide logic
   components/
     EditorBar.vue             patch manager, pattern/bank files, TD-3 USB button, help
-    DeviceOverlay.vue         TD-3 connection, live play, receive/send, backups
+    DeviceOverlay.vue         TD-3 connection, live play, clock out, receive/send, full backup, backups
     SynthPanel.vue            yellow knob panel
     Transport.vue             run/stop, tempo, tap, shuffle
     PatternBank.vue           group / section / pattern selection
-    PatternTools.vue          length, shift, transpose, copy/paste, random, clear, undo
+    PatternTools.vue          length, shift, transpose, copy/paste, clear, undo
+    PatternLab.vue            second row: scale lock, transforms, generator (+ settings popover)
     PianoRoll.vue             piano roll + accent/slide lanes
     HelpOverlay.vue           shortcuts sheet
     LibraryOverlay.vue        pattern library browser
@@ -129,11 +157,15 @@ src/
   hardware/
     td3.js                    Web MIDI: SysEx request/response client, live note player
     README.md                 developer notes: layers, write rules, testing
+public/
+  sw.js                       service worker (offline cache; file list filled in by the build)
+  manifest.webmanifest, icons/  PWA manifest and app icons
 tests/                        Vitest suites (npm test)
 docs/
   TD-3-MO.md                  device notes: hardware, pattern memory, data format, test results
   MIDI-IMPLEMENTATION.md      MIDI + SysEx implementation
 .github/workflows/deploy.yml  test, build and publish to GitHub Pages
+vite.config.js                base './', plus the small "pwa-precache" build step
 ```
 
 ## Data model (how it maps to the TD-3)
@@ -176,12 +208,14 @@ docs/
   triplet timing.
 - Compare the panel layout and sound against a real TD-3-MO and retune the MO controls and
   factory patches by ear.
-- Possibly: send a whole chain or bank to the device, MIDI clock out.
+- Possibly: send a whole chain to the device (a full bank restore from a file exists), `.sqs` export.
+- MIDI clock out and the full restore were tested against a simulated TD-3; check them on the device.
 
 ## Storage keys
 `td3mo.bank.v2` (patterns), `td3mo.presets.v2` (patches), `td3mo.session.v2` (current knobs and
-patch name, slot, selected step, tempo, shuffle, chain, model, colour theme), `td3mo.device.v1` (MIDI
-ports, channel, live play, mute, auto-reconnect, device backups), `td3mo.ui.v1` (library filter and
+patch name, slot, selected step, tempo, shuffle, chain, model, colour theme, scale, generator
+settings), `td3mo.device.v1` (MIDI ports, channel, live play, mute, clock out, auto-reconnect,
+device backups), `td3mo.ui.v1` (library filter and
 "load sound" option). After a reload the editor comes back exactly as it was; the TD-3 reconnects by
 itself when the browser already allowed MIDI access. Data from the first prototype
 (`td3-patches-v1`, `td3-sequences-v1`) is migrated once on first load: old sequences go to

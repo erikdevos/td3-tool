@@ -1,13 +1,14 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { MODELS } from './model/patch.js'
-import { BANK_SIZE, pitchOf } from './model/pattern.js'
+import { BANK_SIZE } from './model/pattern.js'
 import { useEditor } from './store/editor.js'
 import DeviceOverlay from './components/DeviceOverlay.vue'
 import EditorBar from './components/EditorBar.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import LibraryOverlay from './components/LibraryOverlay.vue'
 import PatternBank from './components/PatternBank.vue'
+import PatternLab from './components/PatternLab.vue'
 import PatternTools from './components/PatternTools.vue'
 import PianoRoll from './components/PianoRoll.vue'
 import SynthPanel from './components/SynthPanel.vue'
@@ -84,7 +85,7 @@ const onKeyDown = (event) => {
     event.preventDefault()
     if (step.time !== 'note') return
     const delta = (key === 'ArrowUp' ? 1 : -1) * (event.shiftKey ? 12 : 1)
-    editor.setPitch(index, pitchOf(step) + delta, `nudge-${index}`)
+    editor.nudgePitch(index, delta)
   } else if (lower in NOTE_KEYS && !event.shiftKey) {
     editor.writeNote(NOTE_KEYS[lower])
   } else if (lower === 'z') {
@@ -102,6 +103,10 @@ const onKeyDown = (event) => {
     editor.setTime('rest')
   } else if (lower === 'l') {
     showLibrary.value = true
+  } else if (lower === 'r') {
+    editor.randomizePattern()
+  } else if (lower === 'm') {
+    editor.mutate()
   } else if (key === '[' || key === ']') {
     const current = state.pendingSlot ?? state.slot
     editor.selectSlot((current + (key === ']' ? 1 : -1) + BANK_SIZE) % BANK_SIZE)
@@ -167,6 +172,8 @@ onBeforeUnmount(() => {
           <PatternBank />
           <PatternTools part="tools" @library="showLibrary = true" />
         </div>
+        <!-- second row: scale lock, transforms, generator -->
+        <PatternLab />
         <PianoRoll />
         <p class="hint">
           Click to add a note · drag the right edge to lengthen it · drag up/down to change pitch · click a note to
@@ -297,7 +304,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--print-line);

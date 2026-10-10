@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { BASE_MIDI, MAX_PITCH, MAX_STEPS, MIN_PITCH, midiName, pitchOf } from '../model/pattern.js'
+import { inScale, isChromatic, isRoot } from '../model/scale.js'
 import { useEditor } from '../store/editor.js'
 
 // Classic piano roll for one mono pattern.
@@ -36,6 +37,17 @@ const rows = Array.from({ length: ROWS }, (_, i) => {
   const pc = ((pitch % 12) + 12) % 12
   return { pitch, y: i, black: BLACK.has(pc), c: pc === 0, name: midiName(BASE_MIDI + pitch) }
 })
+
+// Scale shading (SCALE row): rows in the scale stay lit, others go dark, the key's root is marked.
+const scaleOn = computed(() => !isChromatic(state.scale))
+const rowClass = (r) =>
+  scaleOn.value
+    ? ['row', 'scaled', { out: !inScale(state.scale, r.pitch), root: isRoot(state.scale, r.pitch) }]
+    : ['row', { black: r.black }]
+const keyClass = (r) => [
+  'pkey',
+  { black: r.black, c: r.c, out: scaleOn.value && !inScale(state.scale, r.pitch), root: isRoot(state.scale, r.pitch) }
+]
 
 // Note blocks: a 'note' step plus the 'tie' steps that follow it.
 const blocks = computed(() => {
@@ -244,7 +256,7 @@ const laneState = (i, flag) => {
         <div
           v-for="r in rows"
           :key="r.pitch"
-          :class="['pkey', { black: r.black, c: r.c }]"
+          :class="keyClass(r)"
           @pointerdown.prevent="keyDown(r.pitch, $event)"
           @pointerup="previewRelease"
           @pointercancel="previewRelease"
@@ -267,7 +279,7 @@ const laneState = (i, flag) => {
         @contextmenu.prevent
       >
         <svg class="grid-bg" viewBox="0 0 16 37" preserveAspectRatio="none" aria-hidden="true">
-          <rect v-for="r in rows" :key="`r${r.pitch}`" x="0" :y="r.y" width="16" height="1" :class="['row', { black: r.black }]" />
+          <rect v-for="r in rows" :key="`r${r.pitch}`" x="0" :y="r.y" width="16" height="1" :class="rowClass(r)" />
           <line v-for="r in rows.filter((x) => x.c)" :key="`c${r.pitch}`" x1="0" x2="16" :y1="r.y + 1" :y2="r.y + 1" class="c-line" />
           <line v-for="i in 15" :key="`b${i}`" :x1="i" :x2="i" y1="0" y2="37" :class="['beat-line', { strong: i % beatSteps === 0 }]" />
           <rect :x="state.selectedStep" y="0" width="1" height="37" class="sel-col" />
@@ -496,6 +508,24 @@ const laneState = (i, flag) => {
   color: #a9a59a;
 }
 
+/* scale: keys outside it fade, the root gets an amber mark */
+.pkey.out span {
+  opacity: 0.35;
+}
+
+.pkey.root::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
 .roll {
   grid-column: 2 / -1;
   position: relative;
@@ -528,6 +558,19 @@ const laneState = (i, flag) => {
 
 .row.black {
   fill: rgba(0, 0, 0, 0.35);
+}
+
+/* with a scale: in-scale rows lit, the rest dark, the root a little brighter */
+.row.scaled {
+  fill: rgba(255, 176, 32, 0.07);
+}
+
+.row.scaled.out {
+  fill: rgba(0, 0, 0, 0.5);
+}
+
+.row.scaled.root {
+  fill: rgba(255, 176, 32, 0.16);
 }
 
 .c-line {

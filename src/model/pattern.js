@@ -129,37 +129,7 @@ export const demoPatterns = () => [
   parsePattern("Ca . C+ C Ca . D#+s D# Ca . G+s G Ca . A#s C'a")
 ]
 
-// Random acid line generator (minor-ish scales, 303-style flag density).
-const SCALES = [
-  [0, 3, 5, 7, 10, 12],
-  [0, 1, 3, 5, 7, 8, 10, 12],
-  [0, 2, 3, 5, 7, 9, 10, 12]
-]
-
-export const randomPattern = (length = MAX_STEPS) => {
-  const scale = SCALES[Math.floor(Math.random() * SCALES.length)]
-  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
-  const pattern = makePattern()
-  pattern.length = length
-  for (let i = 0; i < MAX_STEPS; i += 1) {
-    const r = Math.random()
-    const prevSounding = i > 0 && pattern.steps[i - 1].time !== 'rest'
-    if (r < 0.14) continue
-    if (r < 0.24 && prevSounding) {
-      pattern.steps[i] = makeStep({ time: 'tie', slide: Math.random() < 0.15 })
-      continue
-    }
-    const o = Math.random()
-    pattern.steps[i] = makeStep({
-      note: i % 4 === 0 && Math.random() < 0.5 ? 0 : pick(scale),
-      octave: o < 0.18 ? 1 : o < 0.3 ? -1 : 0,
-      accent: Math.random() < 0.3,
-      slide: Math.random() < 0.22,
-      time: 'note'
-    })
-  }
-  return pattern
-}
+// The random line generator lives in generate.js.
 
 /** Duration of one step in beats (quarter notes). */
 export const stepBeats = (pattern) => (pattern.triplet ? 1 / 6 : 1 / 4)

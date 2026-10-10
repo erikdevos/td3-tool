@@ -15,17 +15,19 @@ import {
   makePattern,
   midiOf,
   pitchOf,
-  randomPattern,
   slotLabel
 } from '../model/pattern.js'
+import { generatePattern, mutatePattern, normalizeGenerator } from '../model/generate.js'
+import { ROOT_NAMES, isChromatic, normalizeScale, scaleLabel, snapPitch } from '../model/scale.js'
+import { doubleSpeed, fitToScale, halfSpeed, invertPattern, reversePattern, rotateFlags } from '../model/transform.js'
 import { decodeMidi, encodeMidi } from '../model/midi.js'
-import { decodeSeq, encodeSeq } from '../model/td3format.js'
+import { decodeBankFile, decodeSeq, encodeSeq } from '../model/td3format.js'
 import { useDevice } from './device.js'
 import { KEYS, downloadBlob, exportFile, loadAll, parseImportFile, write } from './storage.js'
 
 // Single shared editor state (module singleton). Components import `useEditor()`.
 
-const { playEvents: playOnDevice, panic: devicePanic, syncCutoff, syncTuning, liveActive, device } = useDevice()
+const { playEvents: playOnDevice, panic: devicePanic, syncCutoff, syncTuning, liveActive, clock: deviceClock, device } = useDevice()
 
 const loaded = loadAll()
 const session = loaded.session
@@ -54,6 +56,10 @@ const state = reactive({
   bpm: clampInt(session.bpm, 40, 300, 126),
   shuffle: Number.isFinite(session.shuffle) ? Math.min(1, Math.max(0, session.shuffle)) : 0,
   autoAdvance: session.autoAdvance !== false,
+  // scale lock: key + scale; with `lock` on, new and moved notes snap into the scale
+  scale: normalizeScale(session.scale),
+  // generator settings (see model/generate.js)
+  gen: normalizeGenerator(session.gen),
   playing: false,
   playStep: -1,
   audioReady: false,
@@ -91,6 +97,8 @@ const saveSession = debounce(
       model: state.model,
       theme: state.theme,
       selectedStep: state.selectedStep,
+      scale: state.scale,
+      gen: state.gen,
       factoryVersion: FACTORY_VERSION
     }),
   300
@@ -99,7 +107,7 @@ const saveSession = debounce(
 watch(() => state.bank, saveBank, { deep: true })
 watch(() => state.presets, savePresets, { deep: true })
 watch(
-  () => [state.patch, state.patchName, state.slot, state.bpm, state.shuffle, state.autoAdvance, state.chain, state.model, state.theme, state.selectedStep],
+  () => [state.patch, state.patchName, state.slot, state.bpm, state.shuffle, state.autoAdvance, state.chain, state.model, state.theme, state.selectedStep, state.scale, state.gen],
   saveSession,
   { deep: true }
 )
@@ -258,7 +266,8 @@ const sequencer = createSequencer({
     if (!(device.muteLocal && liveActive())) sendEvents(events)
     playOnDevice(events)
   },
-  onStop: devicePanic
+  onStop: devicePanic,
+  onClock: deviceClock
 })
 
 const play = async () => {
@@ -348,11 +357,56 @@ const clearPattern = () => {
   state.selectedStep = 0
 }
 
-const randomizePattern = () => {
+// ---- scale lock, generator, transforms -------------------------------------------
+
+const scaleOn = () => !isChromatic(state.scale)
+const locked = () => scaleOn() && state.scale.lock
+// pitch for a new or moved note: snapped into the scale while the lock is on
+const lockPitch = (pitch) => (locked() ? snapPitch(state.scale, pitch) : pitch)
+const activeScale = () => (scaleOn() ? state.scale : null)
+
+const setScale = (changes) => {
+  Object.assign(state.scale, changes)
+  notify(scaleOn() ? `SCALE ${scaleLabel(state.scale)}${state.scale.lock ? ' (LOCKED)' : ''}` : 'SCALE OFF')
+}
+
+// Replace the active steps with a transformed copy (one undo step). Steps beyond the length stay.
+const applyPattern = (fn, message, coalesce = null) => {
   edit((p) => {
-    const rnd = randomPattern(p.length)
-    p.steps = rnd.steps
-  })
+    const next = fn(p)
+    p.steps = next.steps
+    p.length = next.length
+  }, coalesce)
+  if (message) notify(message)
+}
+
+/** New random line with the generator settings (in the current key and scale). */
+const randomizePattern = () => {
+  applyPattern((p) => {
+    const fresh = generatePattern(p.length, state.gen, state.scale)
+    // keep whatever is stored beyond the length, like the hardware does
+    return { length: p.length, steps: [...fresh.steps.slice(0, p.length), ...p.steps.slice(p.length)] }
+  }, `NEW LINE · ${scaleLabel(scaleOn() ? state.scale : { root: state.scale.root, type: 'minor' })}`)
+}
+
+const mutate = () => applyPattern((p) => mutatePattern(p, state.gen, state.scale), 'MUTATED')
+
+const TRANSFORMS = {
+  reverse: [(p) => reversePattern(p), 'REVERSED'],
+  invert: [(p) => invertPattern(p, locked() ? state.scale : null), 'INVERTED'],
+  accentLeft: [(p) => rotateFlags(p, 'accent', -1), 'ACCENTS ◀'],
+  accentRight: [(p) => rotateFlags(p, 'accent', 1), 'ACCENTS ▶'],
+  slideLeft: [(p) => rotateFlags(p, 'slide', -1), 'SLIDES ◀'],
+  slideRight: [(p) => rotateFlags(p, 'slide', 1), 'SLIDES ▶'],
+  double: [(p) => doubleSpeed(p), 'DOUBLE SPEED'],
+  half: [(p) => halfSpeed(p), 'HALF SPEED'],
+  fit: [(p) => fitToScale(p, activeScale()), null]
+}
+
+const transform = (name) => {
+  if (name === 'fit' && !scaleOn()) return notify('CHOOSE A SCALE FIRST')
+  const [fn, message] = TRANSFORMS[name]
+  applyPattern(fn, message || `FITTED TO ${scaleLabel(state.scale)}`)
 }
 
 const shiftPattern = (dir) => {
@@ -373,6 +427,11 @@ const transposePattern = (semis) => {
     }
     sounding.forEach((s) => Object.assign(s, fromPitch(pitchOf(s) + semis)))
   }, 'transpose')
+  // the key moves along, so a pattern in a scale stays in it
+  if (scaleOn()) {
+    state.scale.root = (((state.scale.root + semis) % 12) + 12) % 12
+    notify(`KEY ${ROOT_NAMES[state.scale.root]}`)
+  }
 }
 
 const setLength = (length) => {
@@ -404,8 +463,7 @@ const writeNote = (note) => {
   const index = state.selectedStep
   edit((p) => {
     const step = p.steps[index]
-    step.note = note
-    step.time = 'note'
+    Object.assign(step, fromPitch(lockPitch(note + step.octave * 12)), { time: 'note' })
   })
   audition(pattern.value.steps[index])
   advance()
@@ -421,7 +479,7 @@ const setOctave = (octave, index = state.selectedStep) => {
 
 const setPitch = (index, pitch, coalesce = null) => {
   const step = pattern.value.steps[index]
-  const next = fromPitch(pitch)
+  const next = fromPitch(lockPitch(pitch))
   if (step.time === 'note' && step.note === next.note && step.octave === next.octave) return
   edit((p) => {
     Object.assign(p.steps[index], next, { time: 'note' })
@@ -432,7 +490,9 @@ const setPitch = (index, pitch, coalesce = null) => {
 const nudgePitch = (index, delta) => {
   const step = pattern.value.steps[index]
   if (step.time !== 'note') return
-  setPitch(index, pitchOf(step) + delta, `nudge-${index}`)
+  // locked: one scale degree per semitone step, an octave stays an octave
+  const target = locked() && Math.abs(delta) === 1 ? snapPitch(state.scale, pitchOf(step), delta) : pitchOf(step) + delta
+  setPitch(index, target, `nudge-${index}`)
 }
 
 const toggleFlag = (flag, index = state.selectedStep) => {
@@ -472,7 +532,7 @@ const noteEnd = (p, start) => {
 const placeNote = (index, pitch, coalesce = null) => {
   if (index >= pattern.value.length) return
   edit((p) => {
-    Object.assign(p.steps[index], fromPitch(pitch), { time: 'note' })
+    Object.assign(p.steps[index], fromPitch(lockPitch(pitch)), { time: 'note' })
   }, coalesce)
   audition(pattern.value.steps[index], 0.14)
 }
@@ -634,7 +694,22 @@ const replacePattern = (imported) => {
 
 const MAX_IMPORT_PATTERNS = 16
 
-// Accepts .mid/.midi and SynthTribe .seq; the format is detected from the file content.
+// Patterns from a bank-style file (.syx, .sqs): one pattern goes into the current slot, several go
+// to the slots they were saved from. One undo step either way.
+const importSlots = (entries, kind) => {
+  if (!entries.length) throw new Error(`no TD-3 patterns in this ${kind} file`)
+  if (entries.length === 1) {
+    replacePattern(entries[0].pattern)
+    return notify(`${kind} IMPORTED`)
+  }
+  const bySlot = new Map(entries.map((e) => [e.index, e.pattern]))
+  const changed = [...bySlot].filter(([index, p]) => JSON.stringify(state.bank[index]) !== JSON.stringify(p)).length
+  replaceSlots([...bySlot].map(([slot, p]) => ({ slot, pattern: p })))
+  const slots = [...bySlot.keys()].sort((a, b) => a - b)
+  notify(`${kind}: ${slots.length} PATTERNS ${slotLabel(slots[0])} TO ${slotLabel(slots[slots.length - 1])}` + (changed ? ' (UNDO WITH CMD+Z)' : ''))
+}
+
+// Accepts .mid/.midi, SynthTribe .seq / .sqs and .syx; the format is detected from the file content.
 const importPatternFile = async (file) => {
   try {
     const bytes = new Uint8Array(await file.arrayBuffer())
@@ -660,6 +735,9 @@ const importPatternFile = async (file) => {
             (truncated ? ' (TRUNCATED)' : '')
         )
       }
+    } else if (bytes[0] === 0xf0 || bytes[0] === 0x87) {
+      const { kind, entries } = decodeBankFile(bytes) // .syx or SynthTribe .sqs bank
+      importSlots(entries, kind)
     } else {
       const { pattern: imported } = decodeSeq(bytes)
       replacePattern(imported)
@@ -692,6 +770,9 @@ export const useEditor = () => ({
   pastePattern,
   clearPattern,
   randomizePattern,
+  mutate,
+  transform,
+  setScale,
   shiftPattern,
   transposePattern,
   setLength,
