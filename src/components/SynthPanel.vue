@@ -7,11 +7,11 @@ import Knob from './hw/Knob.vue'
 import SlideSwitch from './hw/SlideSwitch.vue'
 
 const { state, setParam } = useEditor()
-const { device } = useDevice()
+const { device, liveActive } = useDevice()
 
 // While a real TD-3 is the sound source (connected + live play), the panel knobs only shape the
 // browser preview. Lock and dim them, except the ones that are sent to the device.
-const hwLive = computed(() => device.status === 'ready' && device.liveOut)
+const hwLive = computed(() => liveActive())
 const linked = computed(() => ({ cutoff: device.linkCutoff, tuning: device.linkTuning }))
 
 const ctl = (key) => {
@@ -28,13 +28,16 @@ const ctl = (key) => {
       TD-3 live: set the knobs on the device<template v-if="device.linkCutoff || device.linkTuning">
         · <span class="hw-dot"></span> sent over MIDI</template
       >
+      · <button type="button" class="hw-unlock" title="Stop live play and unlock the panel" @click="device.liveOut = false">
+        Unlock
+      </button>
     </p>
     <div class="main">
       <div class="cell cell--wave">
         <SlideSwitch
           v-bind="ctl('waveform')"
           :model-value="state.patch.waveform"
-          :positions="['SAW', 'SQUARE']"
+          :positions="['SAW', 'SQUARE', 'OFF']"
           label="Waveform"
           @update:model-value="setParam('waveform', $event)"
         />
@@ -165,6 +168,18 @@ const ctl = (key) => {
   text-transform: uppercase;
   color: var(--ink-soft);
   pointer-events: none;
+}
+.hw-unlock {
+  pointer-events: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--ink);
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 /* ---- main 1/2 ---- */

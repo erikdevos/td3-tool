@@ -24,7 +24,10 @@ DeviceOverlay.vue ──► store/device.js ──► hardware/td3.js ──► 
   Note On/Off, slides as overlaps, panic), `describeMidi` (monitor), `listPorts`.
 - `device.js` holds the connection state, adopts the device's MIDI channels, mirrors live notes,
   sends CC 74 / pitch bend for the linked knobs (throttled to 10 ms), keeps backups, and
-  persists its settings in `localStorage` (`td3mo.device.v1`).
+  persists its settings in `localStorage` (`td3mo.device.v1`). It also runs a heartbeat (a
+  product-name request every 2.5 s): Firefox reports unplugged ports as still connected, so
+  `device.lost` is what stops live play and unlocks the panel there; Chrome's `statechange` is
+  handled too. A port named TD-3 that never answers counts as lost.
 - Both only depend on the Web MIDI *shapes* (an `EventTarget` input with `midimessage` events and
   an output with `send(bytes, timestamp)`), so they also run in Node against a CoreMIDI adapter
   or a fake device.

@@ -48,7 +48,8 @@ npm run build
   black knobs (TB-303 / silver TD-3) and black with aluminium knobs (TD-3 BK). Independent of the
   model; all colours are CSS variables in `src/style.css` (`:root[data-theme=...]`).
 - **Front panel** modeled on the TD-3-MO:
-  - Main row: Waveform, Tuning, Cut Off Freq, Resonance, Env Mod, Decay, Accent and Volume.
+  - Main row: Waveform (saw, square or off: the main oscillator muted, leaving the sub osc or a
+    ringing filter), Tuning, Cut Off Freq, Resonance, Env Mod, Decay, Accent and Volume.
   - "Modded Out" row: Normal Decay, Accent Decay, Soft Attack, Slide Time, Filter Tracking,
     Filter FM and Overdrive, plus switches for Accent Sweep, Sweep Speed, Muffler and Sub Osc.
   - Knobs: drag, scroll, use the arrow keys, Shift for fine control, double-click to reset.

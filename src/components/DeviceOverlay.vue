@@ -16,7 +16,7 @@ const sendTestCC = () => sendCC(ccNumber.value, ccValue.value)
 
 const slot = computed(() => state.slot)
 const label = computed(() => slotLabel(state.slot))
-const sysexOk = computed(() => device.status === 'ready' && Boolean(device.product))
+const sysexOk = computed(() => device.status === 'ready' && Boolean(device.product) && !device.lost)
 const result = ref(null) // { kind: 'ok' | 'warn' | 'error', text }
 const confirmSend = ref(false)
 
@@ -107,6 +107,7 @@ const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'shor
               <span>MIDI out</span>
               <select :value="device.outputId" @change="selectPorts({ outputId: $event.target.value })">
                 <option v-if="!device.outputs.length" :value="null">No outputs</option>
+                <option v-else-if="!device.outputId" :value="null" disabled>Choose a port</option>
                 <option v-for="p in device.outputs" :key="p.id" :value="p.id">{{ p.name }}</option>
               </select>
             </label>
@@ -114,6 +115,7 @@ const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'shor
               <span>MIDI in</span>
               <select :value="device.inputId" @change="selectPorts({ inputId: $event.target.value })">
                 <option v-if="!device.inputs.length" :value="null">No inputs</option>
+                <option v-else-if="!device.inputId" :value="null" disabled>Choose a port</option>
                 <option v-for="p in device.inputs" :key="p.id" :value="p.id">{{ p.name }}</option>
               </select>
             </label>
@@ -138,6 +140,11 @@ const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'shor
             <div class="status">
               <span :class="['led', sysexOk ? 'ok' : 'warn']" aria-hidden="true"></span>
               <span v-if="sysexOk">Connected: {{ device.product }} · firmware {{ device.firmware || '?' }}</span>
+              <span v-else-if="!device.outputId" class="dim">No TD-3 found: connect it with USB and switch it on</span>
+              <span v-else-if="device.lost" class="dim"
+                >The TD-3 stopped answering: unplugged or switched off? Live play is paused until it answers again.
+                Firefox does not notice a reconnected device: restart Firefox (Cmd+Q) after plugging it back in.</span
+              >
               <span v-else class="dim">No SysEx reply: live play may work, receive/send won't</span>
               <button type="button" class="link" @click="identify">Retry</button>
             </div>

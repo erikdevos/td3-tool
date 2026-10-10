@@ -211,6 +211,7 @@ class TD3Voice extends AudioWorkletProcessor {
     this.tables = [buildMipMaps(buildPrototype('saw')), buildMipMaps(buildPrototype('square'))]
     this.phase = 0
     this.subPhase = 0
+    this.seed = 22222
 
     // pitch
     this.oscFreq = 65.41
@@ -358,7 +359,8 @@ class TD3Voice extends AudioWorkletProcessor {
     const fmDepth = Math.pow(p.filterFm, 3) * 4
     const mufflerKnee = [0, 0.7, 0.4][p.muffler] || 0
     const tables = this.tables[p.waveform === 1 ? 1 : 0]
-    const waveGain = p.waveform === 1 ? 0.5 : 1 // Open303 scales the square by 0.5
+    // Open303 scales the square by 0.5; OFF (2) mutes the main oscillator
+    const waveGain = p.waveform === 1 ? 0.5 : p.waveform === 2 ? 0 : 1
     const r = (1 - Math.exp(-3 * sm.resonance)) / (1 - Math.exp(-3)) // Open303 resonance skew
 
     for (let i = 0; i < frames; i += 1) {
@@ -432,6 +434,11 @@ class TD3Voice extends AudioWorkletProcessor {
           if (this.subPhase >= 1) this.subPhase -= 1
           osc += (this.subPhase < 0.5 ? subLevel : -subLevel) * 0.5
         }
+
+        // tiny noise floor, as in the analog circuit: it lets a high resonance start ringing
+        // when the oscillator is off (inaudible otherwise, about -80 dB)
+        this.seed = (this.seed * 1664525 + 1013904223) >>> 0
+        osc += (this.seed / 4294967296 - 0.5) * 2e-4
 
         let x = onePole(this.hp1, osc)
         const y0 = x - onePole(this.fbHp, k * this.y4)

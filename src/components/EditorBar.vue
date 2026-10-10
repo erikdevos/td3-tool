@@ -5,7 +5,7 @@ import { useDevice } from '../store/device.js'
 import { useEditor } from '../store/editor.js'
 
 const emit = defineEmits(['help', 'device'])
-const { device } = useDevice()
+const { device, liveActive } = useDevice()
 
 const {
   state,
@@ -138,7 +138,7 @@ const save = () => savePreset(nameDraft.value)
         title="Connect a TD-3 over USB: live play, receive and send patterns"
         @click="emit('device')"
       >
-        <span :class="['led', { ok: device.status === 'ready' && (Boolean(device.product) || device.liveOut) }]"></span>
+        <span :class="['led', { ok: device.status === 'ready' && ((Boolean(device.product) && !device.lost) || liveActive()) }]"></span>
         TD-3 USB
       </button>
     </div>

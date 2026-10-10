@@ -32,7 +32,9 @@ export const KNOBS = {
 
 // Multi-position switches; value is the index into `positions`.
 export const SWITCHES = {
-  waveform: { label: 'Waveform', positions: ['SAW', 'SQR'], default: 0 },
+  // OFF mutes the main oscillator (TD-3-MO): only the sub osc, a self-oscillating filter or the
+  // external input remain. Index 2 so older patches (0 = saw, 1 = square) keep their meaning.
+  waveform: { label: 'Waveform', positions: ['SAW', 'SQR', 'OFF'], default: 0 },
   accentSweep: { label: 'Accent Sweep', positions: ['OFF', 'NORM', 'HIGH'], default: 1 },
   sweepSpeed: { label: 'Sweep Speed', positions: ['FAST', 'NORM', 'SLOW'], default: 1 },
   muffler: { label: 'Muffler', positions: ['OFF', 'SOFT', 'HARD'], default: 0 },

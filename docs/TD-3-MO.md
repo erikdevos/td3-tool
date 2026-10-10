@@ -38,7 +38,9 @@ ID `0x0A`, same product name and model code). The only differences are the USB/M
 - **Firefox:** works, but Firefox scans for MIDI devices only when it starts. If the TD-3 was not
   connected and switched on at that moment, Firefox silently refuses MIDI access ("no devices
   were detected") until it is restarted. Fix: connect the TD-3, quit Firefox with Cmd+Q, start it
-  again. (Verified with the user's setup.)
+  again. (Verified with the user's setup.) Firefox also keeps listing an unplugged TD-3 as
+  "connected", so the page cannot rely on the port state; the editor asks the device for its name
+  every 2.5 s instead and treats two missed answers as "gone". (Verified with the user's setup.)
 - **Safari:** no Web MIDI at all.
 - **Web MIDI needs a secure context** (HTTPS or localhost); GitHub Pages is fine.
 - **Long SysEx in Node:** the `jzz` library on macOS dropped the device's 123-byte pattern replies
@@ -57,6 +59,14 @@ The synth section is analog. The knobs are potentiometers in the audio path:
   - **Pitch:** pitch bend, within the bend range set on the device (0–12 semitones; test unit ±2).
 - How CC 74 combines with the physical cutoff knob (offset or replace) is not documented and not
   yet measured.
+
+**WAVEFORM switch (TD-3-MO):** SAW, SQUARE and OFF. OFF mutes the main oscillator only; what
+remains audible is the sub oscillator (if switched on), the filter when the resonance makes it
+self-oscillate, and the external audio input. The regular TD-3 has only SAW and SQUARE. (Manual
+summaries and a review, see sources; confirmed by the owner of the test unit.) The editor shows
+the three positions for both models. In the preview, the filter rings without an oscillator
+when the accent sweep is on HIGH and a note is accented; plain maximum resonance stays just below
+self-oscillation, as in Open303. That threshold has not been compared with the real unit.
 
 So a two-way knob sync is impossible. The editor's patches are a model for the browser preview and
 a recall sheet for setting the real knobs by hand; during live play the editor locks every control
@@ -203,6 +213,7 @@ Other community formats exist (`.sqs` banks, `.syx`); the editor does not read t
 - beholder-d, *td3-pattern*, https://github.com/beholder-d/td3-pattern.
 - echolevel, *Acid-Injector*, https://github.com/echolevel/Acid-Injector (`.seq` header).
 - james-see, *synthtribe2midi* issue #1 (TD-3-MO `.seq` exports).
+- TD-3-MO-SR user guide (manuals.plus) and the macProVideo TD-3-MO review (waveform OFF).
 - Thomann product page (cutoff controllable via MIDI, MIDI In/Out/Thru).
 
 No code was copied from these projects; the editor's implementation is independent.

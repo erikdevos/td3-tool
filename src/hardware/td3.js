@@ -30,10 +30,12 @@ export const requestMidiAccess = () => {
 
 export const looksLikeTd3 = (name = '') => /td-?3/i.test(name)
 
-/** All ports as plain objects, TD-3 ports first. */
+/** All connected ports as plain objects, TD-3 ports first. */
 export const listPorts = (access) => {
+  // browsers may keep an unplugged port in the map with state 'disconnected'
   const map = (ports) =>
     [...ports.values()]
+      .filter((p) => p.state !== 'disconnected')
       .map((p) => ({ id: p.id, name: p.name || p.id, td3: looksLikeTd3(p.name) }))
       .sort((a, b) => Number(b.td3) - Number(a.td3))
   return { inputs: map(access.inputs), outputs: map(access.outputs) }
@@ -77,8 +79,8 @@ export const createSysexClient = (input, output, modelId = TD3_MODEL_ID) => {
     return run
   }
 
-  const productName = async () => {
-    const reply = await request(new Uint8Array([...BEHRINGER, modelId, CMD_PRODUCT, 0xf7]), (d) => d[7] === CMD_PRODUCT_REPLY)
+  const productName = async (timeoutMs) => {
+    const reply = await request(new Uint8Array([...BEHRINGER, modelId, CMD_PRODUCT, 0xf7]), (d) => d[7] === CMD_PRODUCT_REPLY, timeoutMs)
     let name = ''
     for (let i = 8; i < reply.length - 1 && reply[i] !== 0; i += 1) name += String.fromCharCode(reply[i])
     return name
@@ -130,7 +132,10 @@ export const createSysexClient = (input, output, modelId = TD3_MODEL_ID) => {
     if (reply[9] !== 0) throw new Error(`The device refused the pattern (status ${reply[9]})`)
   }
 
-  return { request, productName, firmware, config, readPattern, writePattern }
+  /** Is the device still there? A cheap question with a short timeout; never throws. */
+  const ping = (timeoutMs = 600) => productName(timeoutMs).then(() => true, () => false)
+
+  return { request, productName, firmware, config, readPattern, writePattern, ping }
 }
 
 /** Short human-readable description of an incoming MIDI message (for the monitor). */

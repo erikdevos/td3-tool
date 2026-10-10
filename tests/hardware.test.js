@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createNotePlayer, createSysexClient, describeMidi, payloadOf } from '../src/hardware/td3.js'
+import { createNotePlayer, createSysexClient, describeMidi, listPorts, payloadOf } from '../src/hardware/td3.js'
 import { LIBRARY } from '../src/model/library.js'
 import { patternNotes } from '../src/model/midi.js'
 import { decodePatternSysex, encodePatternSysex } from '../src/model/td3format.js'
@@ -45,6 +45,13 @@ describe('SysEx client', () => {
     const client = createSysexClient(input, output)
     expect(await client.productName()).toBe('TD-3')
     expect(await client.firmware()).toBe('1.3.7')
+  })
+
+  it('pings: true while the device answers, false (no throw) when it is gone', async () => {
+    const alive = fakeTd3()
+    expect(await createSysexClient(alive.input, alive.output).ping()).toBe(true)
+    const gone = fakeTd3({ answers: false })
+    expect(await createSysexClient(gone.input, gone.output).ping(50)).toBe(false)
   })
 
   it('reads the MIDI configuration', async () => {
@@ -131,5 +138,18 @@ describe('MIDI monitor', () => {
     expect(describeMidi([0xb0, 74, 100]).text).toContain('CC 74 = 100')
     expect(describeMidi([0x91, 36, 127]).text).toContain('ch 2')
     expect(describeMidi([0xfa]).text).toBe('Start')
+  })
+})
+
+describe('port list', () => {
+  it('leaves out unplugged ports and puts the TD-3 first', () => {
+    const ports = (list) => new Map(list.map((p) => [p.id, p]))
+    const access = {
+      inputs: ports([{ id: 'a', name: 'IAC Bus 1', state: 'connected' }, { id: 'b', name: 'TD-3-MO', state: 'disconnected' }]),
+      outputs: ports([{ id: 'c', name: 'IAC Bus 1' }, { id: 'd', name: 'TD-3-MO', state: 'connected' }])
+    }
+    const { inputs, outputs } = listPorts(access)
+    expect(inputs.map((p) => p.name)).toEqual(['IAC Bus 1'])
+    expect(outputs.map((p) => p.name)).toEqual(['TD-3-MO', 'IAC Bus 1'])
   })
 })

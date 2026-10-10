@@ -25,7 +25,7 @@ import { KEYS, downloadBlob, exportFile, loadAll, parseImportFile, write } from 
 
 // Single shared editor state (module singleton). Components import `useEditor()`.
 
-const { playEvents: playOnDevice, panic: devicePanic, syncCutoff, syncTuning, device } = useDevice()
+const { playEvents: playOnDevice, panic: devicePanic, syncCutoff, syncTuning, liveActive, device } = useDevice()
 
 const loaded = loadAll()
 const session = loaded.session
@@ -255,7 +255,7 @@ const sequencer = createSequencer({
   },
   // WebAudio preview and/or the real TD-3 over MIDI
   output: (events) => {
-    if (!(device.muteLocal && device.liveOut)) sendEvents(events)
+    if (!(device.muteLocal && liveActive())) sendEvents(events)
     playOnDevice(events)
   },
   onStop: devicePanic

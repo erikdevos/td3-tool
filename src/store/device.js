@@ -4,6 +4,7 @@ import {
   createNotePlayer,
   createSysexClient,
   listPorts,
+  looksLikeTd3,
   describeMidi,
   payloadOf,
   requestMidiAccess,
@@ -42,6 +43,7 @@ const device = reactive({
   autoConnect: saved.autoConnect === true, // reconnect on page load (only if MIDI was already allowed)
   muteLocal: saved.muteLocal === true, // silence the WebAudio preview while playing the device
   busy: null, // text of the running SysEx job
+  lost: false, // the TD-3 stopped answering (unplugged / switched off), see the heartbeat
   // patterns as they were on the device before we overwrote them, newest first
   backups: Array.isArray(saved.backups) ? saved.backups.map((b) => ({ ...b, pattern: normalizePattern(b.pattern) })) : []
 })
@@ -70,7 +72,9 @@ let client = null
 const port = (kind, id) => (access && id ? access[kind].get(id) || null : null)
 const output = () => (device.status === 'ready' ? port('outputs', device.outputId) : null)
 
-const pick = (list, name) => (list.find((p) => p.name === name) || list.find((p) => p.td3) || list[0] || null)?.id ?? null
+// The port chosen before (by name), else a TD-3. No blind fallback to another port: live play
+// would then lock the panel for a device that is not there.
+const pick = (list, name) => (list.find((p) => p.name === name) || list.find((p) => p.td3) || null)?.id ?? null
 
 const refreshPorts = () => {
   const { inputs, outputs } = listPorts(access)
@@ -80,11 +84,13 @@ const refreshPorts = () => {
   if (!outputs.some((p) => p.id === device.outputId)) device.outputId = pick(outputs, device.outputName)
 }
 
+let pinging = false
+
 // MIDI monitor: everything the TD-3 sends except clock / active sensing / our own SysEx replies
 let listening = null
 const onIncoming = (event) => {
   const data = event.data
-  if (!device.monitorOn || device.busy || !data.length || data[0] === 0xf8 || data[0] === 0xfe) return
+  if (!device.monitorOn || device.busy || (pinging && data[0] === 0xf0) || !data.length || data[0] === 0xf8 || data[0] === 0xfe) return
   device.monitor.unshift({ at: Date.now(), ...describeMidi(data) })
   device.monitor.splice(40)
 }
@@ -103,14 +109,19 @@ const identify = async () => {
   device.firmware = null
   device.config = null
   client = input && out ? createSysexClient(input, out) : null
-  device.inputName = input?.name ?? null
-  device.outputName = out?.name ?? null
+  // keep the remembered names while the device is unplugged, so it is picked again on return
+  if (input) device.inputName = input.name
+  if (out) device.outputName = out.name
   if (!client) return
   try {
     device.product = await client.productName()
     device.firmware = await client.firmware()
+    device.lost = false
   } catch {
-    // no SysEx reply: wrong port, a different device, or a model ID we don't know yet
+    // no SysEx reply: wrong port, a different device, or a model ID we don't know yet.
+    // A port named TD-3 always answers when the device is there, so silence means it is gone
+    // (Firefox lists unplugged ports as connected until it restarts).
+    device.lost = looksLikeTd3(out.name)
     return
   }
   await readConfig()
@@ -147,10 +158,14 @@ const connect = async () => {
   device.status = 'connecting'
   try {
     access = access || (await requestMidiAccess())
+    // plug / unplug while the page is open: follow the ports, so live play stops by itself
     access.onstatechange = () => {
       const before = `${device.inputId}|${device.outputId}`
       refreshPorts()
-      if (`${device.inputId}|${device.outputId}` !== before) identify()
+      if (`${device.inputId}|${device.outputId}` !== before) {
+        if (!device.outputId) notes.panic()
+        identify()
+      }
     }
     refreshPorts()
     device.status = 'ready'
@@ -175,6 +190,29 @@ const restoreConnection = async () => {
 }
 restoreConnection()
 
+// Heartbeat. Chrome reports an unplugged port through statechange, but Firefox keeps listing it
+// as "connected". So while a TD-3 that answers SysEx is selected, ask it for its name every few
+// seconds; two missed answers in a row = gone (live play stops, the panel unlocks).
+const HEARTBEAT_MS = 2500
+let misses = 0
+const heartbeat = async () => {
+  if (device.status !== 'ready' || !client || device.busy || pinging) return
+  if (!device.product && !device.lost) return // a non-TD-3 port that never answered: nothing to watch
+  if (typeof document !== 'undefined' && document.hidden) return
+  pinging = true
+  const alive = await client.ping()
+  pinging = false
+  misses = alive ? 0 : misses + 1
+  if (alive && device.lost) {
+    device.lost = false
+    if (!device.product) identify() // it was missing on connect: fetch name, firmware and channels now
+  } else if (misses >= 2 && !device.lost) {
+    device.lost = true
+    notes.panic()
+  }
+}
+if (typeof setInterval !== 'undefined' && device.supported) setInterval(heartbeat, HEARTBEAT_MS)
+
 const selectPorts = async ({ inputId = device.inputId, outputId = device.outputId } = {}) => {
   notes.panic()
   device.inputId = inputId
@@ -186,7 +224,9 @@ const selectPorts = async ({ inputId = device.inputId, outputId = device.outputI
 
 const notes = createNotePlayer(output, () => device.channel)
 
-const liveActive = () => device.liveOut && Boolean(output())
+// Live play only counts while the chosen output port is really there (reactive: reads device.*)
+const liveActive = () =>
+  device.liveOut && device.status === 'ready' && !device.lost && Boolean(device.outputId) && Boolean(output())
 
 /** Voice events from the sequencer or an audition, mirrored to the device. */
 const playEvents = (events) => {
